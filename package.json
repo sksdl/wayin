@@ -1,0 +1,16 @@
+{
+  "name": "wayin",
+  "version": "0.1.0",
+  "description": "Pick the class novel from an approved list so every student has a way in, using Qloo taste data from their interest surveys.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/planner.test.js test/qloo.test.js test/flow.test.js test/server.test.js",
+    "check": "node scripts/check-setup.js"
+  }
+}
