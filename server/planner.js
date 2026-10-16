@@ -103,16 +103,45 @@ export function rankTexts(shortlist, rankings, leftOut = {}) {
 // studentSide is in the student's order: by fit over the other students when it comes from
 // classRankings (so one blockbuster does not become everyone's bridge), else by raw affinity.
 export function pickBridge(bookSide, studentSide, { skip = [], ordered = false } = {}) {
+  return bridgeOptions(bookSide, studentSide, { skip, ordered })[0] || null;
+}
+
+// The student's best few films from the book's list, best combined place first.
+export function bridgeOptions(bookSide, studentSide, { skip = [], ordered = false, top = BRIDGE_STUDENT_TOP } = {}) {
   const skipSet = new Set(skip);
   const bookRank = new Map(bookSide.map((e, i) => [e.entity_id, i + 1]));
   const ranked = studentSide.filter((e) => bookRank.has(e.entity_id) && !skipSet.has(e.entity_id));
   if (!ordered) ranked.sort((a, b) => (b.affinity ?? 0) - (a.affinity ?? 0));
-  let best = null;
-  ranked.slice(0, BRIDGE_STUDENT_TOP).forEach((e, i) => {
-    const score = bookRank.get(e.entity_id) + (i + 1);
-    if (!best || score < best.score) best = { ...e, book_rank: bookRank.get(e.entity_id), student_rank: i + 1, of: bookSide.length, score };
-  });
-  return best;
+  return ranked
+    .slice(0, top)
+    .map((e, i) => ({ ...e, book_rank: bookRank.get(e.entity_id), student_rank: i + 1, of: bookSide.length, score: bookRank.get(e.entity_id) + i + 1 }))
+    .sort((a, b) => a.score - b.score);
+}
+
+// One class, at most maxClips films. options: { [studentId]: bridgeOptions(...) }. Greedy cover:
+// each step takes the film in the most students' options (ties: better place on the book's list),
+// then every student gets their best option among the chosen films. Students with none of the
+// chosen films in their options get no clip.
+export function chooseClips(options, maxClips = 3) {
+  const chosen = [];
+  const uncovered = new Set(Object.keys(options).filter((sid) => options[sid]?.length));
+  while (chosen.length < maxClips && uncovered.size) {
+    const count = new Map();
+    for (const sid of uncovered) {
+      for (const o of options[sid]) {
+        const c = count.get(o.entity_id) || { n: 0, book_rank: o.book_rank, id: o.entity_id };
+        c.n++;
+        count.set(o.entity_id, c);
+      }
+    }
+    const best = [...count.values()].sort((a, b) => b.n - a.n || a.book_rank - b.book_rank)[0];
+    if (!best) break;
+    chosen.push(best.id);
+    for (const sid of [...uncovered]) if (options[sid].some((o) => o.entity_id === best.id)) uncovered.delete(sid);
+  }
+  const byStudent = {};
+  for (const [sid, opts] of Object.entries(options)) byStudent[sid] = (opts || []).find((o) => chosen.includes(o.entity_id)) || null;
+  return { chosen, byStudent };
 }
 
 // Per unit and student: way_in, bridge, none or absent. Absent comes from the reactions logged
@@ -140,7 +169,7 @@ export function termRecord(students, units) {
   for (const st of students) {
     const row = done.map((u) => {
       const status = unitStatus(u, st.id);
-      return { unit_id: u.id, status, reaction: u.reactions?.[st.id] || null, missed: missedUnit(u, st.id, status) };
+      return { unit_id: u.id, status, reaction: u.reactions?.[st.id] || null, missed: missedUnit(u, st.id, status), before: u.picked_by === 'teacher' };
     });
     // Consecutive missed units counting back from the latest one the student was there for.
     let streak = 0;

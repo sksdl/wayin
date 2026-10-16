@@ -336,6 +336,43 @@ async function api(req, res, url) {
     return res.end();
   }
 
+  // "Not this clip": the teacher rejects a student's clip. The student gets their next option,
+  // preferring a film the class already has; no new Qloo calls. The film is skipped for that
+  // student in later picks of the same book.
+  if (req.method === 'POST' && (mm = m(/^\/api\/units\/([\w-]+)\/clip$/))) {
+    const unit = ws.units.find((x) => x.id === mm[1]);
+    if (!unit || unit.status !== 'planned' || !unit.plan) throw new HttpError(404, 'No planned unit with that id');
+    const body = await readJson(req);
+    const sid = str(body.student_id, 40);
+    const eid = str(body.entity_id, 80);
+    const st = unit.plan.students[sid];
+    if (!st?.bridge || st.bridge.entity_id !== eid) throw new HttpError(400, 'That student does not have that clip');
+    const p = unit.plan;
+    p.clip_skips ||= {};
+    (p.clip_skips[sid] ||= []).push(eid);
+    ((ws.clipSkips ||= {})[p.chosen.entity_id] ||= {})[sid] = [...new Set([...(ws.clipSkips[p.chosen.entity_id][sid] || []), eid])];
+    const opts = (p.clip_options?.[sid] || []).filter((o) => !p.clip_skips[sid].includes(o.entity_id));
+    const next = opts.find((o) => p.clips.includes(o.entity_id)) || opts[0] || null;
+    st.bridge = next;
+    if (next && !p.clips.includes(next.entity_id)) p.clips.push(next.entity_id);
+    p.clips = p.clips.filter((id) => Object.values(p.students).some((x) => x.bridge?.entity_id === id));
+    const name = ws.students.find((x) => x.id === sid)?.first_name || sid;
+    if (p.doc) {
+      p.doc.bridge_notes = (p.doc.bridge_notes || []).filter((n) => n.student_id !== sid);
+      if (next) p.doc.bridge_notes.push({ student_id: sid, entity_id: next.entity_id, note: `${name}: readers of ${p.chosen.name} also like ${next.name} (${next.content_rating}); it is #${next.student_rank} of those films for ${name}${next.via ? ` (favorite behind it: ${next.via})` : ''}.` });
+    }
+    workspaces.save(ws.id);
+    return json(res, 200, { unit });
+  }
+
+  if (req.method === 'POST' && (mm = m(/^\/api\/units\/([\w-]+)\/delete$/))) {
+    const i = ws.units.findIndex((x) => x.id === mm[1] && x.status === 'planned');
+    if (i < 0) throw new HttpError(404, 'Only a planned unit can be replaced');
+    ws.units.splice(i, 1);
+    workspaces.save(ws.id);
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && (mm = m(/^\/api\/units\/([\w-]+)\/debrief$/))) {
     const unit = ws.units.find((x) => x.id === mm[1]);
     if (!unit || !unit.plan) throw new HttpError(404, 'No such unit');

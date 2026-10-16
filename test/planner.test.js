@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup } from './helpers.js';
 setup();
-const { topK, classRankings, isWayIn, rankTexts, pickBridge, termRecord, unitStatus } = await import('../server/planner.js');
+const { topK, classRankings, isWayIn, rankTexts, pickBridge, chooseClips, termRecord, unitStatus } = await import('../server/planner.js');
+const { clipOk } = await import('../server/profiles.js');
 
 const e = (id, affinity, explain = {}) => ({ entity_id: id, name: id, affinity, explain });
 
@@ -56,6 +57,35 @@ test('a bridge clip is the film both lists rank highest, within the student top 
   assert.equal(b.student_rank, 3);
   assert.equal(pickBridge(bookSide, [e('x', 0.9)]), null, 'films off the book list do not count');
   assert.equal(pickBridge(bookSide, studentSide, { skip: ['f1'] }).entity_id, 'f3');
+});
+
+test('a class gets at most three clip films, chosen to cover the most students', () => {
+  const o = (id, br) => ({ entity_id: id, book_rank: br });
+  const options = {
+    a: [o('F1', 1), o('F2', 2)],
+    b: [o('F1', 1)],
+    c: [o('F3', 3), o('F1', 1)],
+    d: [o('F4', 4)],
+    e: [o('F5', 5)],
+    f: [o('F6', 6)],
+  };
+  const { chosen, byStudent } = chooseClips(options, 3);
+  assert.equal(chosen.length, 3);
+  assert.equal(chosen[0], 'F1', 'F1 is in three students\' options');
+  assert.equal(byStudent.c.entity_id, 'F1', 'c gets a film the class already has');
+  assert.equal(byStudent.f, null, 'nobody past the third film');
+});
+
+test('clip rules keep family and teen films and drop adult-skewed ones', () => {
+  const R = ['G', 'PG'];
+  const f = (rating, year, genres, tags = []) => ({ content_rating: rating, year, genres, tags: tags.map((name) => ({ name })) });
+  assert.equal(clipOk(f('PG', 2024, ['Drama', 'Thriller']), R), false, 'political thriller');
+  assert.equal(clipOk(f('PG', 1984, ['Comedy', 'Romance'], ['High school']), R), false, 'PG from before PG-13 existed, not a family film');
+  assert.equal(clipOk(f('PG', 1977, ['Action', 'Adventure', 'Fantasy', 'Sci-Fi'], ['Family oriented']), R), true);
+  assert.equal(clipOk(f('PG', 2010, ['Comedy', 'Drama', 'Romance'], ['Teenager', 'First crush']), R), true);
+  assert.equal(clipOk(f('PG', 2007, ['Comedy', 'Drama', 'Romance'], ['Restaurant kitchen']), R), false, 'adult romance');
+  assert.equal(clipOk(f('PG-13', 2015, ['Family']), R), false, 'rating outside the class list');
+  assert.equal(clipOk(f(null, 2015, ['Family']), R), false, 'no rating');
 });
 
 test('term record: absent and not enrolled are not counted; did-not-connect counts as missed', () => {

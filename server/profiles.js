@@ -1,11 +1,27 @@
 // Student profiles and the shortlist: turning survey answers and titles into Qloo entities, and
 // fetching the Qloo results a plan needs. Scoring lives in planner.js.
 import * as qloo from './qloo.js';
-import { classRankings, rankTexts, pickBridge, leftOutCounts } from './planner.js';
+import { classRankings, rankTexts, bridgeOptions, chooseClips, leftOutCounts } from './planner.js';
 
 const MIN_FOR_RELATIVE = 4;
 const AGE_OK = /^(middle grade|childrens?|children's|young adult|13-17|9-12)$/i;
 const ADULT = /^(adult|erotica|romance|new adult|18\+)$/i;
+// Films for a 13-year-old class. The book's audience includes adults, so the rating alone let
+// through titles like a papal thriller. A clip needs a youth genre or a teen / family tag, no
+// thriller, crime, horror or war genre, and a PG from before 1985 (when PG-13 arrived) must be a
+// family film.
+const YOUTH_GENRES = new Set(['family', 'animation', 'adventure', 'fantasy', 'sci-fi', 'musical', 'sport']);
+const BLOCK_GENRES = new Set(['thriller', 'crime', 'horror', 'war']);
+const YOUTH_TAG = /\b(teen|teenager|coming of age|high school|middle school|young adult|childhood|family)\b/i;
+export function clipOk(e, ratings) {
+  if (!e.content_rating || !ratings.includes(e.content_rating)) return false;
+  const genres = (e.genres || []).map((g) => g.toLowerCase());
+  const tags = (e.tags || []).map((t) => t.name || '');
+  if (genres.some((g) => BLOCK_GENRES.has(g))) return false;
+  const family = genres.includes('family') || genres.includes('animation') || tags.some((t) => /family/i.test(t));
+  if (e.content_rating === 'PG' && e.year && e.year < 1985 && !family) return false;
+  return genres.some((g) => YOUTH_GENRES.has(g)) || tags.some((t) => YOUTH_TAG.test(t));
+}
 
 export function norm(s) {
   return String(s || '')
@@ -133,9 +149,17 @@ export async function studentRaw(student, books) {
 export async function outsidePicks(student, skipIds, take = 3) {
   const sig = signalsOf(student);
   if (!sig.seeds.length) return { picks: [], request: null };
-  const r = await qloo.insights({ type: 'book', seeds: sig.seeds, excludeEntities: [...new Set([...skipIds, ...sig.seeds])], explain: true, take: 30 });
-  // Only books Qloo tags for young readers; this is for a 13-year-old.
-  const young = r.entities.filter((e) => (e.tags || []).some((t) => AGE_OK.test(t.name)) && !(e.tags || []).some((t) => ADULT.test(t.name)));
+  const r = await qloo.insights({ type: 'book', seeds: sig.seeds, excludeEntities: [...new Set([...skipIds, ...sig.seeds])], excludeTags: sig.avoidTags, explain: true, take: 30 });
+  // Only books Qloo tags for young readers (this is for a 13-year-old), and none carrying a tag the
+  // student asked to keep away from, also by name ("Horror" on a book).
+  const avoidNames = (student.avoid || []).map((a) => norm(a.tag_name || a.label));
+  const young = r.entities.filter(
+    (e) =>
+      (e.tags || []).some((t) => AGE_OK.test(t.name)) &&
+      !(e.tags || []).some((t) => ADULT.test(t.name)) &&
+      !(e.tags || []).some((t) => avoidNames.some((a) => a && norm(t.name).includes(a))) &&
+      !(e.genres || []).some((g) => avoidNames.includes(norm(g))),
+  );
   return { picks: young.slice(0, take).map((e) => ({ entity_id: e.entity_id, name: e.name, year: e.year, via: topSeed(student, e) })), request: r.request };
 }
 
@@ -163,18 +187,15 @@ export async function classRanks(ws, students, { skipRead = false } = {}) {
 }
 
 // Bridge clips for one book. First the films the book's readers also like (one call per book,
-// within the class's ratings), then, for each student without a way in, those same films scored
-// against that student's favorites. Films only: on live data the TV results for book readers were
-// mostly reality shows.
-export async function bridgesFor(ws, book, students) {
+// within the class's ratings, then clipOk), then, for each student without a way in, those same
+// films scored against that student's favorites and ordered by fit over the other students. Each
+// student keeps up to five options; the class gets at most three films (chooseClips). Films only:
+// on live data the TV results for book readers were mostly reality shows.
+export async function bridgesFor(ws, book, students, { bookTags = {}, maxClips = 3 } = {}) {
   const requests = [];
-  const out = {};
-  const side = await qloo.insights({ type: 'movie', seeds: [book.entity_id], contentRatings: ws.klass.ratings, take: 25 });
+  const side = await qloo.insights({ type: 'movie', seeds: [book.entity_id], contentRatings: ws.klass.ratings, take: 30 });
   if (side.request) requests.push({ ...side.request, label: `Films readers of ${book.name} also like` });
-  // Qloo filters by rating already; titles with no rating or one outside the class's list are
-  // dropped here too, in case the filter does not apply to a rating system.
-  const bookSide = side.entities.filter((e) => e.content_rating && ws.klass.ratings.includes(e.content_rating));
-  // Score the book's films against each student's favorites.
+  const bookSide = side.entities.filter((e) => clipOk(e, ws.klass.ratings));
   const scored = {};
   await Promise.all(
     students.map(async (st) => {
@@ -183,17 +204,14 @@ export async function bridgesFor(ws, book, students) {
       if (!sig.seeds.length || !ids.length) return;
       const r = await qloo.insights({ type: 'movie', seeds: sig.seeds, only: ids, excludeTags: sig.avoidTags, explain: true, take: ids.length });
       if (r.request) requests.push({ ...r.request, label: `${st.first_name}: those films against their favorites` });
-      scored[st.id] = r.entities.filter((e) => !e.content_rating || ws.klass.ratings.includes(e.content_rating));
+      scored[st.id] = r.entities;
     }),
   );
-  // With enough students, order each student's films by fit over the others, as for books.
   const relative = Object.keys(scored).length >= MIN_FOR_RELATIVE ? classRankings(scored, bookSide.map((e) => e.entity_id)) : null;
+  const options = {};
   for (const st of students) {
     const list = scored[st.id];
-    if (!list?.length) {
-      out[st.id] = null;
-      continue;
-    }
+    if (!list?.length) continue;
     const byId = new Map(list.map((e) => [e.entity_id, e]));
     const ordered = relative
       ? Object.entries(relative[st.id] || {})
@@ -202,12 +220,35 @@ export async function bridgesFor(ws, book, students) {
           .map(([id]) => byId.get(id))
           .filter(Boolean)
       : list;
-    const b = pickBridge(bookSide, ordered, { ordered: Boolean(relative) });
-    out[st.id] = b
-      ? { entity_id: b.entity_id, name: b.name, type: 'movie', year: b.year, content_rating: b.content_rating || bookSide.find((x) => x.entity_id === b.entity_id)?.content_rating, description: b.description, book_rank: b.book_rank, student_rank: b.student_rank, of: b.of, via: topSeed(st, b) }
-      : null;
+    const skip = (ws.clipSkips?.[book.entity_id]?.[st.id]) || [];
+    options[st.id] = bridgeOptions(bookSide, ordered, { ordered: Boolean(relative), skip }).map((o) => describeClip(o, st, bookSide, bookTags[book.entity_id]));
   }
-  return { bridges: out, requests };
+  const { chosen, byStudent } = chooseClips(options, maxClips);
+  const out = {};
+  for (const st of students) out[st.id] = byStudent[st.id] || null;
+  return { bridges: out, options, clips: chosen, requests };
+}
+
+// What the teacher reads about a clip: where it sits on both lists, the favorite behind it, the
+// Qloo tags it shares with the book, and Qloo's own short description.
+function describeClip(o, st, bookSide, bookTagList = []) {
+  const film = bookSide.find((x) => x.entity_id === o.entity_id) || o;
+  const bookTagNames = new Set((bookTagList || []).map((t) => norm(t.name)));
+  const shared = [...new Set([...(film.genres || []), ...(film.tags || []).map((t) => t.name)])].filter((n) => bookTagNames.has(norm(n))).slice(0, 2);
+  return {
+    entity_id: o.entity_id,
+    name: o.name,
+    type: 'movie',
+    year: film.year ?? o.year,
+    content_rating: film.content_rating || o.content_rating,
+    description: film.description || o.description || null,
+    genres: (film.genres || []).slice(0, 3),
+    shared_tags: shared,
+    book_rank: o.book_rank,
+    student_rank: o.student_rank,
+    of: o.of,
+    via: topSeed(st, o),
+  };
 }
 
 function topSeed(student, entity) {

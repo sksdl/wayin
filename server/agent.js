@@ -195,19 +195,19 @@ async function intakeWithoutModel(ws, student, text, tools, onEvent, { seen, req
 
 // ======================= plan =======================
 
-const PLAN_SYSTEM = `You help an 8th grade English teacher pick the class's next novel from the department's approved shortlist. The goal: every student has a way in. A student has a way in when the book fits them better than it fits the class on average (Qloo affinity to their favorites, compared with the class) and is among their top 3 such books. A student without one can get a bridge clip: a film (within the class's ratings) that ranks high both among films the book's readers like and for that student's favorites.
+const PLAN_SYSTEM = `You help an 8th grade English teacher pick the class's next novel from the department's approved shortlist. The goal: every student has a way in. A student has a way in when the book fits them better than it fits the class on average (Qloo affinity to their favorites, compared with the class) and is among their top 3 such books. A student without one can get a bridge clip: a film (within the class's ratings) that ranks high both among films the book's readers like and for that student's favorites. The class gets at most three clip films.
 Tools:
 - get_class: students, their favorites, how earlier units went for each of them, the shortlist, and the teacher's note.
 - rank_texts: Qloo ranks the shortlist for every student. Returns each book with who has a way in, who does not, and which previously left-out students it reaches.
-- find_bridges(book_id): for the students without a way in to that book, finds a bridge clip for each and reports who is still left with nothing.
+- find_bridges(book_id): for the students without a way in to that book, picks up to three clip films for the class, says who each is for, and who is still left with nothing.
 - look_at_book(book_id): the book's Qloo genre tags and the class favorites that lead students into it. Use it for the opening day.
-- choose_text(book_id, reason): your decision.
+- choose_text(book_id, reason): your decision. Write the reason as "Picked <title> because ...", naming the numbers you compared.
 - submit_unit_plan: the plan for the teacher.
 How to decide: call get_class and rank_texts. Take the top two or three books and call find_bridges on each. Prefer the book that leaves the fewest students with nothing, then the one that reaches students left out of earlier units, then the most direct ways in. Follow the teacher's note when it rules a book out or asks for something (for example a different genre from last unit), and say so in the reason. The reason names the numbers you compared.
 Plan rules:
 - way_in_notes: one line for each student with a way in, using the leads_in favorite that choose_text returns for them ("Maya: Stranger Things leads into this book"). If leads_in is empty, say the book is their #N of the list.
 - Refer to students by first name only. Do not use he, she, his or her for students.
-- bridge_notes: one line per bridged student: the bridge clip title, which of their favorites it connects (connects_favorite from choose_text), and how to use it (a short clip before chapter 1, watched with a partner). Do not describe the film's plot. Use only bridges returned for the chosen book.
+- bridge_notes: one line per bridged student, in this form: "Readers of <book> also like <film>; it is #<rank_of_those_for_student> of those films for <first name> (favorite behind it: <favorite_behind_it>)." Add the shared tags if there are any. Do not say the film "connects" to anything, and do not describe the film beyond qloo_description. Use only bridges returned for the chosen book.
 - opening: two or three sentences for day one, built on the book's tags and the favorites that lead into it (from look_at_book). Do not describe the plot.
 - discussion_starters: three open questions about the book's themes. Use only the book's title, year, description and tags from the tools. Do not invent plot details or character names.
 - teacher_notes: at most four short items, only of these kinds: students still without a way in or a bridge (suggest a one-to-one check-in), students with no favorites on file yet, and what to keep away from for whom. If none apply, return an empty list. No comments about the tools, the data or these rules.
@@ -272,9 +272,9 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
     if (!row) throw new Error('Not a shortlisted book id');
     const book = books.find((b) => b.entity_id === bookId);
     const without = students.filter((st) => row.without.includes(st.id));
-    const { bridges, requests: reqs } = await bridgesFor(ws, book, without);
+    const { bridges, options, clips, requests: reqs } = await bridgesFor(ws, book, without, { bookTags: ranks.bookTags });
     reqs.forEach((q) => log(q));
-    bridgeCache[bookId] = { row, book, bridges };
+    bridgeCache[bookId] = { row, book, bridges, options, clips };
     return bridgeCache[bookId];
   };
   const name = (sid) => ws.students.find((s) => s.id === sid)?.first_name || sid;
@@ -325,10 +325,11 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
       parameters: S.obj({ book_id: S.str }),
       run: async ({ book_id }) => {
         const b = await runBridges(book_id);
+        const clipNames = Object.fromEntries(Object.values(b.bridges).filter(Boolean).map((v) => [v.entity_id, v.name]));
         return {
           title: b.book.name,
           way_in: b.row.way_in.length,
-          bridged: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student: name(sid), student_id: sid, bridge_id: v.entity_id, bridge: `${v.name} (film, ${v.year}, ${v.content_rating})`, place_among_films_book_readers_like: `#${v.book_rank} of ${v.of}`, place_for_this_student: `#${v.student_rank}`, via_favorite: v.via })),
+          clips_for_the_class: b.clips.map((id) => ({ film: clipNames[id], for: Object.entries(b.bridges).filter(([, v]) => v?.entity_id === id).map(([sid]) => name(sid)) })),
           still_left_out: stillNone(b).map(name),
         };
       },
@@ -359,7 +360,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
             const st = ws.students.find((x) => x.id === sid);
             return { student_id: sid, first_name: st.first_name, rank: r?.rank, of: books.length, leads_in: r?.via ? seedName(st, r.via) : null };
           }),
-          bridges: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student_id: sid, bridge_id: v.entity_id, bridge: v.name, book_readers_rank: v.book_rank, student_rank: v.student_rank, connects_favorite: v.via })),
+          bridges: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student_id: sid, bridge_id: v.entity_id, film: v.name, rating: v.content_rating, rank_among_films_book_readers_like: v.book_rank, rank_of_those_for_student: v.student_rank, favorite_behind_it: v.via, tags_shared_with_book: v.shared_tags, qloo_description: v.description })),
         };
       },
     },
@@ -415,7 +416,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
     choice = {
       book_id: best.book.entity_id,
       by: 'rules',
-      reason: `Compared ${Object.values(bridgeCache).filter((b) => !skipped.includes(b.book.entity_id)).length} books. ${best.book.name}: ${best.row.way_in.length} of ${students.length} students have a way in and ${stillNone(best).length} are left without a bridge clip, the fewest of the books compared.${noteLine}`,
+      reason: `Picked ${best.book.name} because it leaves the fewest students with nothing of the ${Object.values(bridgeCache).filter((b) => !skipped.includes(b.book.entity_id)).length} books compared: ${best.row.way_in.length} of ${students.length} have a way in and ${stillNone(best).length} have neither a way in nor a clip.${noteLine}`,
     };
     if (teacherNote && !skipped.length) onEvent({ kind: 'note', text: 'The teacher note was not read because the agent is off.' });
   }
@@ -445,6 +446,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
       way_in: wayIn,
       via: wayIn && r?.via ? seedName(st, r.via) : null,
       bridge: wayIn ? null : chosen.bridges[st.id] || null,
+      clip_options: wayIn ? [] : (chosen.options?.[st.id] || []).map((o) => o.entity_id),
       outside: outside[st.id] || null,
       no_favorites: !signalsOf(st).seeds.length,
     };
@@ -455,6 +457,8 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
       shortlist_size: books.length,
       chosen: { entity_id: chosen.book.entity_id, name: chosen.book.name, year: chosen.book.year, author: chosen.book.author },
       decision: choice,
+      clips: chosen.clips,
+      clip_options: chosen.options,
       compared: Object.values(bridgeCache).map((b) => ({ entity_id: b.book.entity_id, name: b.book.name, way_in: b.row.way_in.length, bridged: Object.values(b.bridges).filter(Boolean).length, left_out: stillNone(b).length })),
       ranking: ranks.ranked.rows.map((r) => ({ entity_id: r.entity_id, name: r.name, way_in: r.way_in.length, mean_rank: r.mean_rank, reaches_left_out: r.priority_reached.length })),
       students: studentsOut,
@@ -499,7 +503,7 @@ export function templatePlan(ws, chosen, ground, ranks) {
   });
   const bridges = Object.entries(chosen.bridges)
     .filter(([, b]) => b)
-    .map(([sid, b]) => ({ student_id: sid, entity_id: b.entity_id, note: `${name(sid)}: show a short scene from ${b.name} (${b.content_rating || 'check rating'}) before chapter 1${b.via ? `; it connects ${b.via} to the book` : ''}.` }));
+    .map(([sid, b]) => ({ student_id: sid, entity_id: b.entity_id, note: `${name(sid)}: readers of ${chosen.book.name} also like ${b.name} (${b.content_rating}); it is #${b.student_rank} of those films for ${name(sid)}${b.via ? ` (favorite behind it: ${b.via})` : ''}.${b.shared_tags?.length ? ` Shared with the book: ${b.shared_tags.join(', ')}.` : ''}` }));
   const none = Object.entries(chosen.bridges).filter(([, b]) => !b).map(([sid]) => name(sid));
   return {
     opening: leads.length
@@ -524,7 +528,7 @@ export function templatePlan(ws, chosen, ground, ranks) {
 
 const DEBRIEF_SYSTEM = `A unit just ended. The teacher logged how each student took the class book (hooked = finished or asked for more, engaged = kept up and joined in, not_engaged = did not connect, absent = missed most of the unit) and wrote a short note.
 Your jobs:
-1. If the note mentions a new favorite for a student (for example "Jonah said it reminded him of The Last of Us"), search Qloo for it and add it with add_favorite. Only add what the note says.
+1. If the note mentions a new favorite for a student (for example "Jonah said it reminded them of Avatar"), search Qloo for it and add it with add_favorite. Only add what the note says.
 2. Write one short note per student who was not absent, for the teacher's own records: how they took the book and one idea for next time that builds on it. Facts only from the log and the note. No grades, no behavior labels, nothing about health or family. Refer to the student by first name; do not use he, she, him, her or his. Vary the wording. No em dashes.
 3. Call save_notes once at the end.`;
 
@@ -570,7 +574,7 @@ export async function debrief(ws, unit, reactions, teacherNote, onEvent = () => 
         if (q.length < 8 || !teacherNote.toLowerCase().includes(q)) return { error: 'The quote must be at least 8 characters copied from the teacher note' };
         if (!st.seeds.some((s) => s.entity_id === entity_id)) {
           st.seeds.push({ name: e.name, type: e.type, source: 'teacher', status: 'resolved', entity_id, matched_name: e.name, year: e.year, added: unit.end });
-          changes.push({ student_id, change: `${e.name} added from the teacher note` });
+          changes.push({ student_id, change: `${baseTitle(e.name)} added from the teacher note` });
         }
         return { ok: true };
       },

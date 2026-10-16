@@ -57,6 +57,8 @@ test('a pick compares books, bridges students without a way in and respects rati
   }
   assert.ok(!p.students.s_ethan.bridge || !/Stranger Things|Wednesday|Coraline/.test(p.students.s_ethan.bridge.name), 'no horror bridge for Ethan');
   for (const s of Object.values(p.students)) if (s.bridge) assert.ok(s.bridge.book_rank >= 1 && s.bridge.student_rank <= 5, 'bridge ranks recorded');
+  assert.ok(p.clips.length <= 3, 'at most three clip films for the class');
+  for (const s of Object.values(p.students)) if (s.bridge) assert.ok(p.clips.includes(s.bridge.entity_id));
   assert.ok(Array.isArray(p.lead_ins) && Array.isArray(p.book_tags));
 });
 
@@ -71,6 +73,14 @@ test('closing a unit turns a hooked book into a favorite, and the next pick skip
   const next = await plan(ws, { title: 'Unit 2' });
   assert.notEqual(next.plan.chosen.entity_id, first.plan.chosen.entity_id);
   assert.ok(!next.plan.ranking.some((r) => r.entity_id === first.plan.chosen.entity_id));
+});
+
+test('outside-list ideas leave out what the student asked to avoid', async () => {
+  const { outsidePicks } = await import('../server/profiles.js');
+  const e = byId('s_ethan');
+  const o = await outsidePicks(e, [], 5);
+  for (const b of o.picks) assert.ok(!/Coraline|Stranger|Five Nights/.test(b.name), b.name);
+  assert.match(o.request.query, /filter.exclude.tags=urn%3Atag%3Agenre%3Amedia%3Ahorror/);
 });
 
 test('plan checks catch invented bridges and students without a way in', () => {

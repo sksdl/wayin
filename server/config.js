@@ -68,7 +68,7 @@ export function resolveConfig(env) {
       modelRunsPerDay: Number(env.MODEL_RUNS_PER_DAY || 300),
       workspacesPerIpPerHour: Number(env.WORKSPACES_PER_IP_PER_HOUR || 20),
     },
-    qlooDailyBudget: Number(env.QLOO_DAILY_BUDGET || 600),
+    qlooDailyBudget: Number(env.QLOO_DAILY_BUDGET || 1500),
   };
 }
 

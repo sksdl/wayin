@@ -105,7 +105,8 @@ function traceRow(ev) {
     else if (r.bridged) s = `${r.title}: ${r.way_in} ways in, ${r.bridged.length} bridged, left out: ${r.still_left_out.join(', ') || 'nobody'}`;
     else if (r.shared_tags) s = `shared: ${r.shared_tags.join(', ') || 'none'}`;
     else if (r.results) s = `${r.results.length} results${r.results[0] ? `, top: ${r.results[0].name}` : ''}`;
-    else if (r.tags) s = `${r.tags.length} tags${r.tags[0] ? `, top: ${r.tags[0].name}` : ''}`;
+    else if (r.tags) s = `${r.tags.length} tags${r.tags[0] ? `, top: ${r.tags[0].name ?? r.tags[0]}` : ''}`;
+    else if (r.clips_for_the_class) s = `${r.title}: ${r.way_in} ways in, clips: ${r.clips_for_the_class.map((c) => `${c.film} (${c.for.length})`).join(', ') || 'none'}, left out: ${r.still_left_out.join(', ') || 'nobody'}`;
     else if (r.students) s = `${r.students.length} students, ${r.shortlist.length} books`;
     return `<div class="t-row"><span class="t-kind n">Result</span><span>${esc(s)}</span></div>`;
   }
@@ -155,6 +156,8 @@ const seedChip = (s, removable) => {
   return `<span class="chip ${cls}" title="${esc(tip)}">${typeIcon(s.type)}${esc(title(s.matched_name || s.name))}${removable ? `<button data-remove="${esc(s.name)}" data-eid="${esc(s.entity_id || '')}" aria-label="Remove">×</button>` : ''}</span>`;
 };
 const statusChip = (status, extra = '') => `<span class="st ${status}">${esc(STATUS_LABEL[status] || status)}${extra}</span>`;
+// A unit picked before Way In had no clips, so "nothing" there is shown as a plain "No way in".
+const termChip = (u) => (u.before && u.status === 'none' ? '<span class="st absent">No way in</span>' : statusChip(u.status)) + (u.reaction === 'not_engaged' && u.status !== 'none' ? ' <span class="miss" title="Didn’t connect">✕</span>' : '');
 
 // ---------- pages ----------
 function pageToday() {
@@ -191,11 +194,11 @@ function pageToday() {
     <section class="card">
       <div class="card-head"><h2>Who had a way in this term?</h2><span class="tiny">${esc(unitCounts.join(' · '))}</span></div>
       <p class="small muted" style="margin-bottom:10px">Way in: the class book fit the student better than it fit the class on average, and was in the student’s top 3 by that measure. Bridge clip: a film that ranks high both among films the book’s readers like and for the student’s own favorites. Students who had nothing, or had something and didn’t connect, count extra in the next pick.</p>
-      ${anySample ? '<p class="tiny" style="margin-bottom:10px">Units 1 and 2 were picked before Way In. Their ways in are Qloo looking back; the reactions in them are sample data for the demo.</p>' : ''}
+      ${anySample ? '<p class="tiny" style="margin-bottom:10px">Units 1 and 2 were picked before Way In, so nobody got a clip. Their ways in are Qloo looking back; the reactions in them are sample data for the demo. <span class="miss">✕</span> = had something but didn’t connect.</p>' : ''}
       ${streak.length ? `<div class="coverage warn" style="margin-bottom:10px">${ICONS.alert}<span>${streak.length} student${streak.length > 1 ? 's' : ''} missed the last ${Math.min(...streak.map(({ r }) => r.streak))} or more units in a row: ${esc(joinNames(streak.map(({ st }) => st.first_name)))}. The next pick counts them extra.</span></div>` : ''}
       <div class="table-wrap"><table class="term"><thead><tr><th>Student</th>${units.map((u) => `<th>${esc(u.text)}${u.sample ? ' <span class="tiny">(sample)</span>' : ''}</th>`).join('')}<th>Favorites</th></tr></thead><tbody>
       ${recs
-        .map(({ st, r }) => `<tr class="${r.streak >= 2 ? 'flag' : ''}"><td><a href="#/students/${st.id}" class="row nowrap" style="gap:8px;color:inherit">${avatar(st, true)}${esc(st.first_name)} ${esc(st.last_initial)}.</a></td>${r.units.map((u) => `<td>${statusChip(u.status, u.reaction === 'not_engaged' && u.status !== 'none' ? ' · didn’t connect' : '')}</td>`).join('')}<td class="tiny">${st.seed_count}</td></tr>`)
+        .map(({ st, r }) => `<tr class="${r.streak >= 2 ? 'flag' : ''}"><td><a href="#/students/${st.id}" class="row nowrap" style="gap:8px;color:inherit">${avatar(st, true)}${esc(st.first_name)} ${esc(st.last_initial)}.</a></td>${r.units.map((u) => `<td>${termChip(u)}</td>`).join('')}<td class="tiny">${st.seed_count}</td></tr>`)
         .join('')}</tbody></table></div>
     </section>
     <div class="grid">
@@ -230,7 +233,7 @@ function pageStudents() {
       return `<a class="card student-card" href="#/students/${st.id}">
       <div class="student-top">${avatar(st)}<div><h3>${esc(st.first_name)} ${esc(st.last_initial)}.</h3><div class="small muted">${st.seed_count} favorites${st.needs_review ? ` · ${st.needs_review} to confirm` : ''}</div></div></div>
       <div class="chips">${st.seeds.slice(0, 4).map((s) => seedChip(s)).join('') || '<span class="small muted">Survey not read yet</span>'}${st.seeds.length > 4 ? `<span class="chip">+${st.seeds.length - 4}</span>` : ''}</div>
-      <div class="row" style="gap:6px">${r.units.map((u) => statusChip(u.status)).join('')}</div>
+      <div class="row" style="gap:6px">${r.units.map((u) => termChip(u)).join('')}</div>
       ${st.new_student ? '<span class="badge clay">New this week · survey not read</span>' : ''}
     </a>`;
     })
@@ -245,13 +248,14 @@ function pageStudent(id) {
   return `
   <div class="page-head">
     <div class="row">${avatar(st)}<div><h1>${esc(st.first_name)} ${esc(st.last_initial)}.</h1><div class="sub">${esc(STATE.klass.name)}</div></div></div>
-    <div class="row">${r.units.map((u, i) => `<span class="tiny">${esc(STATE.term.units[i].text)}</span>${statusChip(u.status)}`).join('')}</div>
+    <div class="row">${r.units.map((u, i) => `<span class="tiny">${esc(STATE.term.units[i].text)}</span>${termChip(u)}`).join('')}</div>
   </div>
   <div class="grid cols-main">
     <div class="grid">
       <section class="card">
         <div class="card-head"><h2>Interest survey</h2><span class="tiny">Read by the agent, matched in Qloo</span></div>
         <textarea id="survey">${esc(st.survey || '')}</textarea>
+        <p class="tiny" style="margin-top:6px">Demo only. Don’t enter real student names or details; what you type is kept for 14 days.</p>
         <div class="row" style="margin-top:10px"><button class="btn primary" id="read">${ICONS.spark} Read survey with the agent</button><span class="small muted" id="read-status"></span></div>
         <div id="intake-out" style="margin-top:12px"></div>
       </section>
@@ -360,7 +364,7 @@ function pagePlan() {
         <label class="field">Unit title<input type="text" id="title" value="Unit ${n}"></label>
         <label class="field">Starts<input type="date" id="start" value="${local}"></label>
       </div>
-      <label class="field" style="margin-top:12px">Note for the agent (optional)<textarea id="note" placeholder="For example: we just read two serious books, so something with more humor would be good. Or: skip Refugee, the 7th grade team is reading it."></textarea></label>
+       <label class="field" style="margin-top:12px">Note for the agent (optional, demo only: no real names)<textarea id="note" placeholder="For example: we just read two serious books, so something with more humor would be good. Or: skip Refugee, the 7th grade team is reading it."></textarea></label>
       ${noFav.length ? `<div class="coverage warn" style="margin-top:12px">${ICONS.alert}<span>${esc(joinNames(noFav.map((s) => s.first_name)))} ${noFav.length > 1 ? 'have' : 'has'} no favorites on file, so the pick cannot include them yet. <a href="#/students/${noFav[0].id}">Read the survey first</a>.</span></div>` : ''}
       <div class="row" style="margin-top:14px"><button class="btn primary" id="go">${ICONS.spark} Pick with the agent</button><span class="small muted" id="go-status"></span></div>
     </section>
@@ -439,7 +443,7 @@ function pageUnit(id) {
     <div><div class="tiny">${esc(u.title)} · from ${fmtDate(u.start)}</div><h1>${esc(p.chosen.name)}</h1>
       <div class="row" style="margin-top:6px"><span class="muted">${esc(p.chosen.author || '')}${p.chosen.year ? ` · ${p.chosen.year}` : ''}</span>
       <span class="badge ${p.decision.by === 'agent' ? 'teal' : ''}">${p.decision.by === 'agent' ? 'Picked by the agent' : p.decision.by === 'teacher' ? 'Picked before Way In' : 'Picked with fixed rules'}</span></div></div>
-    <div class="row no-print"><button class="btn" id="print">${ICONS.print} Print plan</button></div>
+    <div class="row no-print">${u.status === 'planned' && u.picked_by !== 'teacher' ? '<button class="btn ghost" id="replace">Replace this plan</button>' : ''}<button class="btn" id="print">${ICONS.print} Print plan</button></div>
   </div>
   <div class="grid cols-main">
     <div class="grid">
@@ -451,7 +455,7 @@ function pageUnit(id) {
       </section>
       ${weekBox(u, studs)}
       <section class="card">
-        <div class="card-head"><h2>Every student’s way in</h2><span class="tiny">rank = place in their own Qloo ranking of ${p.shortlist_size} books</span></div>
+        <div class="card-head"><h2>Every student’s way in</h2><span class="tiny">#N = place among the ${p.shortlist_size} books by fit over the class</span></div>
         <div class="roster">${studs
           .map((st) => {
             const s = p.students[st.id] || {};
@@ -460,7 +464,7 @@ function pageUnit(id) {
             let what;
             if (s.no_favorites) what = `${statusChip('nofav')}<span>No favorites on file yet. <a href="#/students/${st.id}">Read the survey</a></span>`;
             else if (s.way_in) what = `${statusChip('way_in', ` · #${s.rank} of ${s.of}`)}<span>${esc(wn?.note || (s.via ? `via ${s.via}` : ''))}</span>`;
-            else if (s.bridge) what = `${statusChip('bridge')}<span>${typeIcon(s.bridge.type)} <b>${esc(s.bridge.name)}</b> <span class="tiny">${esc(s.bridge.content_rating || '')}${s.bridge.year ? ` · ${s.bridge.year}` : ''}</span></span><span>${esc(bn?.note || (s.bridge.via ? `connects ${s.bridge.via} to the book` : ''))}</span>${s.bridge.book_rank ? `<span class="tiny">#${s.bridge.book_rank} of ${s.bridge.of} films readers of this book like · #${s.bridge.student_rank} of those for ${esc(st.first_name)}</span>` : ''}`;
+            else if (s.bridge) what = `${statusChip('bridge')}<span>${typeIcon(s.bridge.type)} <b>${esc(s.bridge.name)}</b> <span class="tiny">${esc(s.bridge.content_rating || '')}${s.bridge.year ? ` · ${s.bridge.year}` : ''}</span></span><span class="small">Readers of ${esc(p.chosen.name)} also like it; #${s.bridge.student_rank} of those films for ${esc(st.first_name)}${s.bridge.via ? ` (favorite behind it: ${esc(s.bridge.via)})` : ''}.${s.bridge.shared_tags?.length ? ` Shared with the book: ${esc(s.bridge.shared_tags.join(', '))}.` : ''}</span>${!done && !teacherPicked ? `<button class="btn small ghost" data-noclip="${st.id}" data-e="${esc(s.bridge.entity_id)}">Not this clip</button>` : ''}`;
             else if (s.bridge_searched === false) what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span class="tiny">Bridge clips were not searched (picked before Way In).</span>`;
             else what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span>No bridge clip found. Plan a one-to-one check-in.${s.outside ? ` Independent-reading idea: <b>${esc(title(s.outside.name))}</b>${s.outside.via ? ` (via ${esc(s.outside.via)})` : ''}.` : ''}</span>`;
             return `<div class="roster-row"><a class="who" href="#/students/${st.id}" style="text-decoration:none;color:inherit">${avatar(st, true)}${esc(st.first_name)}</a><div class="what">${what}</div></div>`;
@@ -476,7 +480,7 @@ function pageUnit(id) {
       ${doc?.teacher_notes?.length ? `<section class="card"><div class="card-head"><h2>Teacher notes</h2></div><ul style="margin:0;padding-left:18px;display:grid;gap:6px" class="small">${doc.teacher_notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></section>` : ''}
       <section class="card">
         <div class="card-head"><h2>Whole list, this class</h2></div>
-        <table class="cmp"><thead><tr><th>Book</th><th>Ways in</th><th>Avg rank</th></tr></thead><tbody>${p.ranking.map((r) => `<tr class="${r.entity_id === p.chosen.entity_id ? 'on' : ''}"><td>${esc(r.name)}</td><td>${r.way_in}</td><td>${r.mean_rank ?? '–'}</td></tr>`).join('')}</tbody></table>
+        <table class="cmp"><thead><tr><th>Book</th><th>Ways in</th><th>Reaches students left out before</th></tr></thead><tbody>${p.ranking.map((r) => `<tr class="${r.entity_id === p.chosen.entity_id ? 'on' : ''}"><td>${esc(r.name)}</td><td>${r.way_in}</td><td>${r.reaches_left_out ?? '–'}</td></tr>`).join('')}</tbody></table>
       </section>
       <section class="card no-print">
         <div class="card-head"><h2>Qloo requests</h2><span class="tiny">${u.requests?.length || 0}</span></div>
@@ -519,7 +523,7 @@ function weekBox(u, studs) {
   return `<section class="card week">
     <div class="card-head"><h2>This week</h2><span class="tiny">what to prepare before chapter 1</span></div>
     <div class="grid cols-2">
-      <div><h3>Clips to queue</h3>${clips.size ? `<ul class="plain">${[...clips.values()].map(({ b, who }) => `<li>${typeIcon(b.type)} <b>${esc(b.name)}</b> <span class="tiny nowrap">${esc(typeWord(b.type))} · ${esc(b.content_rating || '')}</span><br><span class="small muted">for ${esc(joinNames(who))}</span></li>`).join('')}</ul>` : '<div class="empty">None needed.</div>'}</div>
+      <div><h3>Clips to queue ${clips.size ? `<span class="tiny">${clips.size} film${clips.size > 1 ? 's' : ''}, pull one short scene from each</span>` : ''}</h3>${clips.size ? `<ul class="plain">${[...clips.values()].map(({ b, who }) => `<li>${typeIcon(b.type)} <b>${esc(b.name)}</b> <span class="tiny nowrap">${esc(typeWord(b.type))} · ${esc(b.content_rating || '')}${b.year ? ` · ${b.year}` : ''}</span>${b.description ? `<br><span class="tiny">${esc(b.description)}</span>` : ''}<br><span class="small muted">for ${esc(joinNames(who))}</span></li>`).join('')}</ul>` : '<div class="empty">None needed.</div>'}</div>
       <div><h3>One-to-one check-ins</h3>${checkIns.length || noFav.length ? `<ul class="plain small">${checkIns.map((n) => `<li>${esc(n)}: no way in or clip</li>`).join('')}${noFav.map((n) => `<li>${esc(n)}: no favorites yet, read the survey</li>`).join('')}</ul>` : '<div class="empty">Nobody.</div>'}
         ${avoid.length ? `<h3 style="margin-top:12px">Keep away from</h3><ul class="plain small">${avoid.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}</div>
     </div>
@@ -536,6 +540,29 @@ function debriefView(u) {
 
 function wireUnit(id) {
   document.getElementById('print')?.addEventListener('click', () => window.print());
+  document.getElementById('replace')?.addEventListener('click', async () => {
+    if (!confirm('Remove this plan and pick again?')) return;
+    try {
+      await postJson(`/api/units/${id}/delete`);
+      await loadState();
+      location.hash = '#/plan';
+    } catch (e) {
+      toast(e.message);
+    }
+  });
+  $app.querySelectorAll('[data-noclip]').forEach(
+    (b) =>
+      (b.onclick = async () => {
+        try {
+          await postJson(`/api/units/${id}/clip`, { student_id: b.dataset.noclip, entity_id: b.dataset.e });
+          await loadState();
+          await route_();
+          toast('Clip replaced');
+        } catch (e) {
+          toast(e.message);
+        }
+      }),
+  );
   const u = STATE.units.find((x) => x.id === id);
   if (!u || u.status === 'done' || !u.plan) return;
   const rx = {};
