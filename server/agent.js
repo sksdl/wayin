@@ -10,13 +10,14 @@
 import { config } from './config.js';
 import { runTools, S, modelStatus } from './llm.js';
 import * as qloo from './qloo.js';
-import { termRecord } from './planner.js';
-import { resolveStudent, resolveShortlist, shortlistBooks, classRanks, bridgesFor, commonGround, signalsOf, seedName, norm, readBookIds, containsName, outsidePicks } from './profiles.js';
+import { termRecord, isWayIn } from './planner.js';
+import { resolveStudent, resolveShortlist, shortlistBooks, classRanks, bridgesFor, signalsOf, seedName, norm, readBookIds, containsName, outsidePicks, baseTitle, bestMatch } from './profiles.js';
 
 export const modelOn = () => config.aiMode === 'azure-openai' && modelStatus().available;
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const joinNames = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 const SEARCH_TYPES = ['tv_show', 'movie', 'artist', 'videogame', 'book', 'person'];
+const GENERIC_TAGS = /^(fiction|nonfiction|classics?|childrens?|children's|middle grade|young adult|teen|adult|\d+-\d+|complex|contemporary|hardcover|paperback|audiobook|ebook|novels?|books?|literature)$/i;
 const escapeRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const TYPE_WORD = { tv_show: 'show', movie: 'film', artist: 'music', videogame: 'game', book: 'book', person: 'creator' };
 
@@ -172,11 +173,11 @@ async function intakeWithoutModel(ws, student, text, tools, onEvent, { seen, req
     requests.push({ ...request, label: `Search "${p}"` });
     onEvent({ kind: 'qloo', request });
     results.forEach((e) => seen.set(e.entity_id, e));
-    const hit = results.find((r) => norm(r.name) === norm(p)) || results.find((r) => norm(p).length > 5 && norm(r.name).startsWith(norm(p)));
+    const hit = bestMatch(p, results);
     if (hit && !favorites.some((f) => f.entity_id === hit.entity_id)) favorites.push({ student_wrote: p, entity_id: hit.entity_id });
     else if (!hit) {
       // Close but not exact ("FC 24" -> "EA Sports FC 24"): let the teacher choose.
-      const near = results.filter((r) => norm(r.name).includes(norm(p)) || norm(p).split(' ').every((w) => norm(r.name).includes(w))).slice(0, 3);
+      const near = results.filter((r) => norm(baseTitle(r.name)).includes(norm(p)) || norm(p).split(' ').every((w) => norm(r.name).includes(w))).slice(0, 3);
       if (near.length) questions.push({ student_wrote: p, question: 'Which one did the student mean?', candidate_ids: near.map((r) => r.entity_id) });
     }
   }
@@ -194,20 +195,20 @@ async function intakeWithoutModel(ws, student, text, tools, onEvent, { seen, req
 
 // ======================= plan =======================
 
-const PLAN_SYSTEM = `You help an 8th grade English teacher pick the class's next novel from the department's approved shortlist. The goal: every student has a way in. A student has a way in when the book is in their own top 3 of the shortlist by Qloo affinity to their favorites. A student without one can get a bridge: a film or show (within the class's ratings) that both the book and that student's favorites pushed up, per Qloo explainability.
+const PLAN_SYSTEM = `You help an 8th grade English teacher pick the class's next novel from the department's approved shortlist. The goal: every student has a way in. A student has a way in when the book fits them better than it fits the class on average (Qloo affinity to their favorites, compared with the class) and is among their top 3 such books. A student without one can get a bridge clip: a film (within the class's ratings) that ranks high both among films the book's readers like and for that student's favorites.
 Tools:
 - get_class: students, their favorites, how earlier units went for each of them, the shortlist, and the teacher's note.
 - rank_texts: Qloo ranks the shortlist for every student. Returns each book with who has a way in, who does not, and which previously left-out students it reaches.
-- find_bridges(book_id): for the students without a way in to that book, finds a bridge for each and reports who is still left with nothing.
-- check_common_ground(book_id): tags the class's favorites and the book's readers share (Qloo compare). Use it for the opening day.
+- find_bridges(book_id): for the students without a way in to that book, finds a bridge clip for each and reports who is still left with nothing.
+- look_at_book(book_id): the book's Qloo genre tags and the class favorites that lead students into it. Use it for the opening day.
 - choose_text(book_id, reason): your decision.
 - submit_unit_plan: the plan for the teacher.
 How to decide: call get_class and rank_texts. Take the top two or three books and call find_bridges on each. Prefer the book that leaves the fewest students with nothing, then the one that reaches students left out of earlier units, then the most direct ways in. Follow the teacher's note when it rules a book out or asks for something (for example a different genre from last unit), and say so in the reason. The reason names the numbers you compared.
 Plan rules:
 - way_in_notes: one line for each student with a way in, using the leads_in favorite that choose_text returns for them ("Maya: Stranger Things leads into this book"). If leads_in is empty, say the book is their #N of the list.
 - Refer to students by first name only. Do not use he, she, his or her for students.
-- bridge_notes: one line per bridged student: the bridge clip title, which of their favorites it connects (connects_favorite from choose_text), what it shares with the book (shares_with_book tags, if any), and how to use it (a short clip before chapter 1, watched with a partner). Use only bridges returned for the chosen book.
-- opening: two or three sentences for day one, built on the common ground tags if there are any.
+- bridge_notes: one line per bridged student: the bridge clip title, which of their favorites it connects (connects_favorite from choose_text), and how to use it (a short clip before chapter 1, watched with a partner). Do not describe the film's plot. Use only bridges returned for the chosen book.
+- opening: two or three sentences for day one, built on the book's tags and the favorites that lead into it (from look_at_book). Do not describe the plot.
 - discussion_starters: three open questions about the book's themes. Use only the book's title, year, description and tags from the tools. Do not invent plot details or character names.
 - teacher_notes: at most four short items, only of these kinds: students still without a way in or a bridge (suggest a one-to-one check-in), students with no favorites on file yet, and what to keep away from for whom. If none apply, return an empty list. No comments about the tools, the data or these rules.
 Plain, short sentences. No marketing words, no em dashes.`;
@@ -242,6 +243,20 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
   let choice = null;
   let draft = null;
   let ground = null;
+  // Opening-day material from data already fetched: the book's Qloo tags (minus format and age
+  // labels) and the favorites that explain each student's way in.
+  const groundFor = (bookId) => {
+    const tags = (ranks.bookTags[bookId] || []).map((t) => t.name).filter((n) => !GENERIC_TAGS.test(n)).slice(0, 5);
+    const lead = new Map();
+    for (const st of students) {
+      const r = ranks.rankings[st.id]?.[bookId];
+      if (!isWayIn(r, ranks.ranked.k) || !r.via) continue;
+      const n = seedName(st, r.via);
+      if (!lead.has(n)) lead.set(n, []);
+      lead.get(n).push(st.first_name);
+    }
+    return { book_id: bookId, tags, lead_ins: [...lead.entries()].map(([name, who]) => ({ name, students: who })).sort((a, b) => b.students.length - a.students.length).slice(0, 5) };
+  };
 
   const runRank = async () => {
     if (!ranks) {
@@ -257,7 +272,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
     if (!row) throw new Error('Not a shortlisted book id');
     const book = books.find((b) => b.entity_id === bookId);
     const without = students.filter((st) => row.without.includes(st.id));
-    const { bridges, requests: reqs } = await bridgesFor(ws, book, without, ranks.bookTags);
+    const { bridges, requests: reqs } = await bridgesFor(ws, book, without);
     reqs.forEach((q) => log(q));
     bridgeCache[bookId] = { row, book, bridges };
     return bridgeCache[bookId];
@@ -292,7 +307,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
       run: async () => {
         const r = await runRank();
         return {
-          way_in_means: `book is in the student's top ${r.ranked.k} of ${books.length}`,
+          way_in_means: `book is in the student's top ${r.ranked.k} of ${books.length} by fit over the class average, and above that average`,
           books: r.ranked.rows.map((row) => ({
             book_id: row.entity_id,
             title: row.name,
@@ -313,22 +328,20 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
         return {
           title: b.book.name,
           way_in: b.row.way_in.length,
-          bridged: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student: name(sid), student_id: sid, bridge_id: v.entity_id, bridge: `${v.name} (${v.type === 'movie' ? 'film' : 'TV'}, ${v.year}, ${v.content_rating})`, via_favorite: v.via, shares_with_book: v.shared_tags })),
+          bridged: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student: name(sid), student_id: sid, bridge_id: v.entity_id, bridge: `${v.name} (film, ${v.year}, ${v.content_rating})`, place_among_films_book_readers_like: `#${v.book_rank} of ${v.of}`, place_for_this_student: `#${v.student_rank}`, via_favorite: v.via })),
           still_left_out: stillNone(b).map(name),
         };
       },
     },
     {
-      name: 'check_common_ground',
-      description: "Tags shared by the class's favorites and this book's readers (Qloo compare).",
+      name: 'look_at_book',
+      description: "The book's Qloo genre tags and the favorites that lead students into it.",
       parameters: S.obj({ book_id: S.str }),
       run: async ({ book_id }) => {
-        const book = books.find((b) => b.entity_id === book_id);
-        if (!book) return { error: 'Not a shortlisted book id' };
-        const g = await commonGround(students, book);
-        log(g.request, `Class vs ${book.name}: common ground`);
-        ground = { book_id, shared: g.shared };
-        return { shared_tags: g.shared.map((t) => t.name), note: g.error || null };
+        await runRank();
+        if (!books.some((b) => b.entity_id === book_id)) return { error: 'Not a shortlisted book id' };
+        ground = groundFor(book_id);
+        return { tags: ground.tags, favorites_that_lead_in: ground.lead_ins.map((l) => `${l.name} (${l.students.join(', ')})`) };
       },
     },
     {
@@ -346,7 +359,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
             const st = ws.students.find((x) => x.id === sid);
             return { student_id: sid, first_name: st.first_name, rank: r?.rank, of: books.length, leads_in: r?.via ? seedName(st, r.via) : null };
           }),
-          bridges: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student_id: sid, bridge_id: v.entity_id, bridge: v.name, connects_favorite: v.via, shares_with_book: v.shared_tags })),
+          bridges: Object.entries(b.bridges).filter(([, v]) => v).map(([sid, v]) => ({ student_id: sid, bridge_id: v.entity_id, bridge: v.name, book_readers_rank: v.book_rank, student_rank: v.student_rank, connects_favorite: v.via })),
         };
       },
     },
@@ -407,11 +420,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
     if (teacherNote && !skipped.length) onEvent({ kind: 'note', text: 'The teacher note was not read because the agent is off.' });
   }
   const chosen = bridgeCache[choice.book_id];
-  if (!ground || ground.book_id !== choice.book_id) {
-    const g = await commonGround(students, chosen.book);
-    log(g.request, `Class vs ${chosen.book.name}: common ground`);
-    ground = { book_id: choice.book_id, shared: g.shared };
-  }
+  if (!ground || ground.book_id !== choice.book_id) ground = groundFor(choice.book_id);
   if (!draft) draft = templatePlan(ws, chosen, ground, ranks);
 
   // Students the chosen book leaves with nothing get Qloo's top book outside the list, as an
@@ -449,7 +458,8 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
       compared: Object.values(bridgeCache).map((b) => ({ entity_id: b.book.entity_id, name: b.book.name, way_in: b.row.way_in.length, bridged: Object.values(b.bridges).filter(Boolean).length, left_out: stillNone(b).length })),
       ranking: ranks.ranked.rows.map((r) => ({ entity_id: r.entity_id, name: r.name, way_in: r.way_in.length, mean_rank: r.mean_rank, reaches_left_out: r.priority_reached.length })),
       students: studentsOut,
-      common_ground: ground.shared,
+      book_tags: ground.tags,
+      lead_ins: ground.lead_ins,
       doc: draft,
     },
     requests,
@@ -480,7 +490,8 @@ export function checkPlan(p, choice, bridgeCache, students) {
 export function templatePlan(ws, chosen, ground, ranks) {
   const name = (sid) => ws.students.find((s) => s.id === sid)?.first_name || sid;
   const st = (sid) => ws.students.find((s) => s.id === sid);
-  const shared = ground?.shared?.map((t) => t.name.toLowerCase()) || [];
+  const tags = (ground?.tags || []).map((t) => t.toLowerCase());
+  const leads = (ground?.lead_ins || []).slice(0, 3).map((l) => l.name);
   const wayIn = chosen.row.way_in.map((sid) => {
     const r = ranks.rankings[sid]?.[chosen.book.entity_id];
     const via = r?.via ? seedName(st(sid), r.via) : null;
@@ -491,8 +502,8 @@ export function templatePlan(ws, chosen, ground, ranks) {
     .map(([sid, b]) => ({ student_id: sid, entity_id: b.entity_id, note: `${name(sid)}: show a short scene from ${b.name} (${b.content_rating || 'check rating'}) before chapter 1${b.via ? `; it connects ${b.via} to the book` : ''}.` }));
   const none = Object.entries(chosen.bridges).filter(([, b]) => !b).map(([sid]) => name(sid));
   return {
-    opening: shared.length
-      ? `Start with what the class already likes: ${joinNames(shared.slice(0, 3))}. Ask students to name a show or game with one of these, then read the first page of ${chosen.book.name} aloud.`
+    opening: leads.length
+      ? `Put ${joinNames(leads)} on the board: those are favorites in this class that lead into ${chosen.book.name}.${tags.length ? ` Qloo tags the book ${joinNames(tags.slice(0, 3))}.` : ''} Ask pairs what a story like that needs, then read the first page aloud.`
       : `Ask each student to name a story they could not put down, then read the first page of ${chosen.book.name} aloud.`,
     way_in_notes: wayIn,
     bridge_notes: bridges,

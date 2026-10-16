@@ -24,6 +24,7 @@ const CATALOG = [
   ['Holes', 'book', 1998, ['mystery', 'comedy', 'friendship', 'adventure']],
   ['The Westing Game', 'book', 1978, ['mystery', 'puzzle', 'comedy']],
   ['The Last Cuentista', 'book', 2021, ['sci_fi', 'dystopia', 'storytelling', 'space', 'family']],
+  ['Restart', 'book', 2017, ['school', 'comedy', 'identity', 'friendship', 'sports']],
   // ---- books students name ----
   ['The Lightning Thief', 'book', 2005, ['fantasy', 'mythology', 'adventure', 'comedy']],
   ['Diary of a Wimpy Kid', 'book', 2007, ['comedy', 'school', 'graphic_novel']],
@@ -112,7 +113,7 @@ const CATALOG = [
   ['Minecraft', 'videogame', 2011, ['gaming', 'survival', 'adventure', 'creativity']],
   ['Fortnite', 'videogame', 2017, ['gaming', 'survival', 'competition', 'action']],
   ['The Legend of Zelda: Tears of the Kingdom', 'videogame', 2023, ['gaming', 'fantasy', 'adventure']],
-  ['Pokémon Scarlet and Violet', 'videogame', 2022, ['gaming', 'adventure', 'anime', 'friendship']],
+  ['Pokemon Scarlet', 'videogame', 2022, ['gaming', 'adventure', 'anime', 'friendship']],
   ['Roblox', 'videogame', 2006, ['gaming', 'creativity', 'friendship']],
   ['The Last of Us Part I', 'videogame', 2022, ['gaming', 'survival', 'horror', 'post_apocalyptic']],
   ['EA Sports FC 24', 'videogame', 2023, ['gaming', 'sports', 'soccer', 'competition']],
@@ -126,6 +127,7 @@ const CATALOG = [
   ['MrBeast', 'person', 1998, ['competition', 'comedy', 'kindness']],
   ['Rick Riordan', 'person', 1964, ['fantasy', 'mythology', 'adventure']],
   ['Jason Reynolds', 'person', 1983, ['verse', 'sports', 'city', 'running']],
+  ['Lin-Manuel Miranda', 'person', 1980, ['musical', 'hip_hop', 'historical', 'verse']],
 ];
 
 function fakeUuid(s) {
@@ -147,6 +149,7 @@ function wire(e, extraQuery) {
   if (e.type === 'artist') properties.start_year = e.year;
   if (e.type === 'movie' || e.type === 'tv_show') Object.assign(properties, { release_year: e.year, release_date: `${e.year}-01-01`, content_rating: e.rating });
   if (e.type === 'book') properties.publication_year = e.year;
+  const extraTags = e.type === 'book' ? [{ id: 'urn:tag:genre:media:middle_grade', name: 'Middle Grade', type: 'urn:tag:genre:media' }] : [];
   if (e.type === 'videogame') properties.release_date = `${e.year}-01-01`;
   if (e.type === 'person') properties.date_of_birth = `${e.year}-01-01`;
   return {
@@ -157,7 +160,7 @@ function wire(e, extraQuery) {
     popularity: 0.55 + 0.44 * pseudo(`pop|${e.entity_id}`),
     disambiguation: e.type === 'movie' ? String(e.year) : '',
     properties,
-    tags: e.tags.map(T),
+    tags: [...e.tags.map(T), ...extraTags],
     external: {},
     ...(extraQuery ? { query: extraQuery } : {}),
   };

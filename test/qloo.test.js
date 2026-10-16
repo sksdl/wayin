@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup } from './helpers.js';
 setup();
-const { normalizeEntity, search, insights, findTags, compare } = await import('../server/qloo.js');
+const { normalizeEntity, search, insights, findTags } = await import('../server/qloo.js');
 
 test('insights entity: real type comes from subtype, explainability becomes a map', () => {
   const x = normalizeEntity({
@@ -48,7 +48,4 @@ test('requests use the parameters the live API documents', async () => {
     assert.ok(!c.tags.some((x) => x.id === t.tags[0].id), `${c.name} is not horror`);
   }
 
-  const cmp = await compare({ a: [fav], b: [book] });
-  assert.equal(cmp.request.path, '/v2/analysis/compare');
-  assert.match(cmp.request.query, /a.signal.interests.entities=/);
 });

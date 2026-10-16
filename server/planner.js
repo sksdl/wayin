@@ -1,12 +1,11 @@
 // Choosing a class read. Pure functions: no network, no model.
 //
 // Inputs are Qloo results that were already fetched:
-//   - per student: affinity of every shortlisted book toward that student's favorites
-//     (insights with filter.results.entities = the shortlist), with explainability
-//   - per student without a way in: films and TV scored against the book plus that student's
-//     favorites, with explainability (the bridge search)
-// Nothing here turns an affinity into a claim about a person. A student "has a way in" when a book
-// is near the top of their own ranking of the shortlist; the UI shows ranks, not percentages.
+//   - per student: affinity of every listed book toward that student's favorites
+//     (insights with filter.results.entities = the list), with explainability
+//   - per book: films its readers also like; per student without a way in: those films scored
+//     against the student's favorites (the bridge search)
+// Nothing here turns an affinity into a claim about a person. The UI shows ranks, not percentages.
 
 // A book is a student's way in when it is in their own top 3 of the unread approved books.
 export const TOP_K = 3;
@@ -14,27 +13,57 @@ export function topK(listSize) {
   return Math.min(TOP_K, Math.max(1, listSize - 1));
 }
 
-// Bridge: a film or show both the book and the student's favorites pushed up. Each side must
-// account for at least this share of Qloo's explainability for the item.
-export const BRIDGE_MIN_SHARE = 0.2;
+// Bridge clip: a film both sides rank high. bookSide is what readers of the book also like
+// (Qloo insights with the book as the only signal), in order. studentSide is the same films scored
+// against one student's favorites (filter.results.entities = bookSide). The bridge is the film with
+// the best combined place in both lists, and it must be in the student's own top BRIDGE_STUDENT_TOP.
+export const BRIDGE_STUDENT_TOP = 5;
 
 // Students who missed earlier units (nothing, or did not connect) count more in the next pick.
 export const LEFT_OUT_WEIGHT = 0.5;
 
-// results: Qloo entities for one student, already restricted to the shortlist.
-// Returns { [bookId]: { rank, affinity, via } } where via is the seed id that explained it most.
-export function studentRanking(results, shortlistIds) {
-  const allowed = new Set(shortlistIds);
-  const ranked = results.filter((e) => allowed.has(e.entity_id)).sort((a, b) => (b.affinity ?? 0) - (a.affinity ?? 0));
+// Raw Qloo affinity is shared a lot between students: on live data the same three popular books
+// were in the top 3 of 15 of 17 students. What tells a teacher something is how much better a book
+// fits this student than it fits the class. So every affinity is turned into a z-score within its
+// book (across the class), and each student's ranking is by that score.
+//
+// raw: { [studentId]: Qloo entities restricted to the list }
+// Returns { [studentId]: { [bookId]: { rank, z, affinity, via } } } over bookIds only.
+export function classRankings(raw, bookIds) {
+  const allowed = new Set(bookIds);
+  const aff = {};
+  const via = {};
+  for (const [sid, list] of Object.entries(raw)) {
+    aff[sid] = {};
+    via[sid] = {};
+    for (const e of list || []) {
+      if (!allowed.has(e.entity_id) || !Number.isFinite(e.affinity)) continue;
+      aff[sid][e.entity_id] = e.affinity;
+      via[sid][e.entity_id] = Object.entries(e.explain || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    }
+  }
+  const stats = {};
+  for (const b of bookIds) {
+    const vals = Object.values(aff).map((m) => m[b]).filter((v) => Number.isFinite(v));
+    const mean = vals.reduce((a, v) => a + v, 0) / (vals.length || 1);
+    const sd = Math.sqrt(vals.reduce((a, v) => a + (v - mean) ** 2, 0) / (vals.length || 1)) || 1;
+    stats[b] = { mean, sd };
+  }
   const out = {};
-  ranked.forEach((e, i) => {
-    const via = Object.entries(e.explain || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-    out[e.entity_id] = { rank: i + 1, affinity: e.affinity ?? null, via };
-  });
+  for (const sid of Object.keys(aff)) {
+    const rows = Object.entries(aff[sid])
+      .map(([b, a]) => ({ b, a, z: (a - stats[b].mean) / stats[b].sd }))
+      .sort((x, y) => y.z - x.z || y.a - x.a);
+    out[sid] = Object.fromEntries(rows.map((r, i) => [r.b, { rank: i + 1, z: round(r.z), affinity: r.a, via: via[sid][r.b] }]));
+  }
   return out;
 }
 
-// rankings: { [studentId]: studentRanking(...) }
+// A way in: the book is in the student's top K by fit over the class, and fits them better than
+// the class average (z > 0). A student whose tastes match no book better than the class gets none.
+export const isWayIn = (r, k) => Boolean(r && r.rank <= k && r.z > 0);
+
+// rankings: { [studentId]: classRankings(...)[studentId] }
 // leftOut: { [studentId]: number of earlier units with no way in and no bridge }
 export function rankTexts(shortlist, rankings, leftOut = {}) {
   const k = topK(shortlist.length);
@@ -51,7 +80,7 @@ export function rankTexts(shortlist, rankings, leftOut = {}) {
         rankSum += r.rank;
         ranked++;
       }
-      if (r && r.rank <= k) {
+      if (isWayIn(r, k)) {
         wayIn.push(sid);
         weighted += 1 + LEFT_OUT_WEIGHT * (leftOut[sid] || 0);
       } else without.push(sid);
@@ -71,19 +100,18 @@ export function rankTexts(shortlist, rankings, leftOut = {}) {
   return { k, rows };
 }
 
-// candidates: Qloo films/TV scored against [bookId, ...studentSeeds] with explainability.
-export function pickBridge(candidates, bookId, studentSeedIds, { skip = [] } = {}) {
-  const seeds = new Set(studentSeedIds);
+// studentSide is in the student's order: by fit over the other students when it comes from
+// classRankings (so one blockbuster does not become everyone's bridge), else by raw affinity.
+export function pickBridge(bookSide, studentSide, { skip = [], ordered = false } = {}) {
   const skipSet = new Set(skip);
+  const bookRank = new Map(bookSide.map((e, i) => [e.entity_id, i + 1]));
+  const ranked = studentSide.filter((e) => bookRank.has(e.entity_id) && !skipSet.has(e.entity_id));
+  if (!ordered) ranked.sort((a, b) => (b.affinity ?? 0) - (a.affinity ?? 0));
   let best = null;
-  for (const c of candidates) {
-    if (skipSet.has(c.entity_id) || seeds.has(c.entity_id)) continue;
-    const bookShare = c.explain?.[bookId] || 0;
-    const studentShare = Object.entries(c.explain || {}).reduce((sum, [id, v]) => (seeds.has(id) ? sum + v : sum), 0);
-    if (bookShare < BRIDGE_MIN_SHARE || studentShare < BRIDGE_MIN_SHARE) continue;
-    const score = Math.min(bookShare, studentShare) * (c.affinity ?? 0.5);
-    if (!best || score > best.score) best = { ...c, book_share: round(bookShare), student_share: round(studentShare), score: round(score) };
-  }
+  ranked.slice(0, BRIDGE_STUDENT_TOP).forEach((e, i) => {
+    const score = bookRank.get(e.entity_id) + (i + 1);
+    if (!best || score < best.score) best = { ...e, book_rank: bookRank.get(e.entity_id), student_rank: i + 1, of: bookSide.length, score };
+  });
   return best;
 }
 

@@ -56,7 +56,8 @@ test('a pick compares books, bridges students without a way in and respects rati
     if (s.way_in) assert.ok(s.rank <= p.k);
   }
   assert.ok(!p.students.s_ethan.bridge || !/Stranger Things|Wednesday|Coraline/.test(p.students.s_ethan.bridge.name), 'no horror bridge for Ethan');
-  assert.ok(first.requests.some((r) => r.path === '/v2/analysis/compare'));
+  for (const s of Object.values(p.students)) if (s.bridge) assert.ok(s.bridge.book_rank >= 1 && s.bridge.student_rank <= 5, 'bridge ranks recorded');
+  assert.ok(Array.isArray(p.lead_ins) && Array.isArray(p.book_tags));
 });
 
 test('closing a unit turns a hooked book into a favorite, and the next pick skips books already read', async () => {

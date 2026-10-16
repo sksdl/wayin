@@ -32,6 +32,8 @@ const COLORS = ['#2f5d50', '#b8642f', '#5a6f9a', '#8a5a83', '#6b7d3a', '#a0523d'
 const colorOf = (id) => COLORS[[...String(id)].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
 const avatar = (p, sm) => `<span class="avatar${sm ? ' sm' : ''}" style="background:${colorOf(p.id)}">${esc((p.first_name || '?')[0])}</span>`;
 const typeIcon = (t) => ICONS[t] || ICONS.spark;
+// Qloo book names carry a series note ("Holes (Holes, #1)"); show the plain title.
+const title = (n) => String(n || '').replace(/\s*\([^()]*\)\s*$/, '').trim() || String(n || '');
 const student = (id) => STATE.students.find((s) => s.id === id);
 
 function toast(msg) {
@@ -149,8 +151,8 @@ function renderNav(route) {
 
 const seedChip = (s, removable) => {
   const cls = s.status !== 'resolved' ? 'review' : s.source === 'reaction' ? 'reaction' : s.source === 'teacher' ? 'staff' : '';
-  const title = s.status === 'resolved' ? `${TYPE_LABEL[s.type] || s.type}${s.year ? `, ${s.year}` : ''} · ${SOURCE_LABEL[s.source] || ''}` : 'Needs a check';
-  return `<span class="chip ${cls}" title="${esc(title)}">${typeIcon(s.type)}${esc(s.matched_name || s.name)}${removable ? `<button data-remove="${esc(s.name)}" data-eid="${esc(s.entity_id || '')}" aria-label="Remove">×</button>` : ''}</span>`;
+  const tip = s.status === 'resolved' ? `${s.matched_name || s.name} · ${TYPE_LABEL[s.type] || s.type}${s.year ? `, ${s.year}` : ''} · ${SOURCE_LABEL[s.source] || ''}` : 'Needs a check';
+  return `<span class="chip ${cls}" title="${esc(tip)}">${typeIcon(s.type)}${esc(title(s.matched_name || s.name))}${removable ? `<button data-remove="${esc(s.name)}" data-eid="${esc(s.entity_id || '')}" aria-label="Remove">×</button>` : ''}</span>`;
 };
 const statusChip = (status, extra = '') => `<span class="st ${status}">${esc(STATUS_LABEL[status] || status)}${extra}</span>`;
 
@@ -180,7 +182,7 @@ function pageToday() {
     <h3>New here? Try the whole loop in three steps</h3>
     <ol class="steps">
       <li><div><b>Read a survey.</b> ${newcomer ? `${esc(newcomer.first_name)} transferred in this week and answered the interest survey in a few lines.` : 'Every student has a profile now.'} The agent finds each title in Qloo and notes what to keep away from. <a href="#/students/${newcomer?.id || 's_diego'}">Open ${esc(newcomer?.first_name || 'Diego')}’s profile</a></div></li>
-      <li><div><b>Pick the next class read.</b> Qloo ranks the department’s approved list for every student. The agent compares the top books, finds a bridge clip (a film or show) for students a book doesn’t reach, and explains its choice. <a href="#/plan">Pick the Unit ${nextNo} read</a></div></li>
+      <li><div><b>Pick the next class read.</b> Qloo ranks the department’s approved list for every student. The agent compares the top books, finds a bridge clip (a film) for students a book doesn’t reach, and explains its choice. <a href="#/plan">Pick the Unit ${nextNo} read</a></div></li>
       <li><div><b>Close the unit.</b> Mark who was hooked and who didn’t connect. Both change the next pick.${planned[0] ? ` <a href="#/units/${planned[0].id}">Open ${esc(planned[0].title)}</a>` : ''}</div></li>
     </ol>
   </div>
@@ -188,7 +190,7 @@ function pageToday() {
   <div class="grid cols-main">
     <section class="card">
       <div class="card-head"><h2>Who had a way in this term?</h2><span class="tiny">${esc(unitCounts.join(' · '))}</span></div>
-      <p class="small muted" style="margin-bottom:10px">Way in: the class book was in the student’s own top 3 of the unread approved books. Bridge clip: a film or show Qloo ties to both the book and the student’s favorites. Students who had nothing, or had something and didn’t connect, count extra in the next pick.</p>
+      <p class="small muted" style="margin-bottom:10px">Way in: the class book fit the student better than it fit the class on average, and was in the student’s top 3 by that measure. Bridge clip: a film that ranks high both among films the book’s readers like and for the student’s own favorites. Students who had nothing, or had something and didn’t connect, count extra in the next pick.</p>
       ${anySample ? '<p class="tiny" style="margin-bottom:10px">Units 1 and 2 were picked before Way In. Their ways in are Qloo looking back; the reactions in them are sample data for the demo.</p>' : ''}
       ${streak.length ? `<div class="coverage warn" style="margin-bottom:10px">${ICONS.alert}<span>${streak.length} student${streak.length > 1 ? 's' : ''} missed the last ${Math.min(...streak.map(({ r }) => r.streak))} or more units in a row: ${esc(joinNames(streak.map(({ st }) => st.first_name)))}. The next pick counts them extra.</span></div>` : ''}
       <div class="table-wrap"><table class="term"><thead><tr><th>Student</th>${units.map((u) => `<th>${esc(u.text)}${u.sample ? ' <span class="tiny">(sample)</span>' : ''}</th>`).join('')}<th>Favorites</th></tr></thead><tbody>
@@ -207,7 +209,7 @@ function pageToday() {
       </section>
       <section class="card">
         <div class="card-head"><h2>Approved list</h2><span class="tiny">${S.shortlist.length} books</span></div>
-        <div class="chips">${S.shortlist.map((b) => `<span class="chip" title="${esc(b.author || '')}">${ICONS.book}${esc(b.matched_name || b.name)}</span>`).join('')}</div>
+        <div class="chips">${S.shortlist.map((b) => `<span class="chip" title="${esc(b.author || '')}">${ICONS.book}${esc(b.name)}</span>`).join('')}</div>
       </section>
     </div>
   </div>`;
@@ -255,7 +257,7 @@ function pageStudent(id) {
       </section>
       <section class="card">
         <div class="card-head"><h2>How the approved list ranks for ${esc(st.first_name)}</h2></div>
-        <p class="small muted" style="margin-bottom:10px">Qloo scores each unread approved book against ${esc(st.first_name)}’s favorites. A book in the top 3 is a way in.</p>
+        <p class="small muted" style="margin-bottom:10px">Qloo scores each unread approved book against ${esc(st.first_name)}’s favorites. The list is ordered by how much better each book fits ${esc(st.first_name)} than it fits the class; a book in the top 3 that fits better than the class average is a way in.</p>
         <div id="ranking"><div class="empty"><span class="spinner dark"></span> Asking Qloo…</div></div>
       </section>
     </div>
@@ -281,7 +283,7 @@ function pageStudent(id) {
 function reviewBlock(s) {
   if (s.status === 'not_found') return `<div class="note-card small" style="margin-bottom:8px">“${esc(s.name)}” was not found in Qloo. <button class="btn small ghost" data-remove="${esc(s.name)}" data-eid="">Remove</button></div>`;
   return `<div class="note-card" style="margin-bottom:8px"><div class="small"><b>“${esc(s.name)}”</b> ${esc(s.question || 'Which one did the student mean?')}</div>
-    <div class="row" style="margin-top:6px">${(s.candidates || []).map((c) => `<button class="btn small" data-choose="${esc(s.name)}" data-eid="${esc(c.entity_id)}">${typeIcon(c.type)} ${esc(c.name)}${c.year ? ` (${c.year})` : ''}</button>`).join('')}
+    <div class="row" style="margin-top:6px">${(s.candidates || []).map((c) => `<button class="btn small" data-choose="${esc(s.name)}" data-eid="${esc(c.entity_id)}">${typeIcon(c.type)} ${esc(title(c.name))}${c.year ? ` (${c.year})` : ''}</button>`).join('')}
     <button class="btn small ghost" data-remove="${esc(s.name)}" data-eid="">None of these</button></div></div>`;
 }
 
@@ -332,10 +334,10 @@ async function wireStudent(id) {
     if (!el) return;
     el.innerHTML = j.rows.some((r) => r.rank)
       ? `<div class="rank-list">${j.rows
-          .map((b) => `<div class="rank-row ${b.rank && b.rank <= 3 ? 'top' : ''}"><span class="rank-no">${b.rank ?? '–'}</span><span>${esc(b.name)}${b.via && b.rank <= 3 ? ` <span class="tiny">via ${esc(b.via)}</span>` : ''}</span><span class="tiny">${b.year || ''}</span></div>`)
+          .map((b) => `<div class="rank-row ${b.way_in ? 'top' : ''}"><span class="rank-no">${b.rank ?? '–'}</span><span>${esc(b.name)}${b.via && b.way_in ? ` <span class="tiny">via ${esc(b.via)}</span>` : ''}</span><span class="tiny">${b.above ? 'above class' : ''}</span></div>`)
           .join('')}</div>
         ${j.read?.length ? `<p class="tiny" style="margin-top:8px">Already read in class: ${j.read.map((b) => `${esc(b.name)} (${esc(String(b.read_in).split(':')[0])})`).join(', ')}</p>` : ''}
-        ${j.outside?.length ? `<div class="sep"></div><h3 style="margin:8px 0 4px">Outside the list</h3><p class="tiny" style="margin-bottom:6px">Qloo’s strongest books for ${esc(st.first_name)} from all books. Ideas for independent reading, and a check on how well the approved list fits.</p><div class="chips">${j.outside.map((b) => `<span class="chip">${ICONS.book}${esc(b.name)}${b.via ? ` <span class="tiny">via ${esc(b.via)}</span>` : ''}</span>`).join('')}</div>` : ''}
+        ${j.outside?.length ? `<div class="sep"></div><h3 style="margin:8px 0 4px">Outside the list</h3><p class="tiny" style="margin-bottom:6px">Qloo’s strongest books for ${esc(st.first_name)} from all books. Ideas for independent reading, and a check on how well the approved list fits.</p><div class="chips">${j.outside.map((b) => `<span class="chip">${ICONS.book}${esc(title(b.name))}${b.via ? ` <span class="tiny">via ${esc(b.via)}</span>` : ''}</span>`).join('')}</div>` : ''}
         <details class="why"><summary>Qloo requests (${j.requests.length})</summary>${reqList(j.requests)}</details>`
       : `<div class="empty">${st.seed_count ? 'Qloo returned no scores for this list.' : 'Read the survey first.'}</div>`;
   } catch (e) {
@@ -365,7 +367,7 @@ function pagePlan() {
     <section class="card">
       <div class="card-head"><h2>What it works from</h2></div>
       <div class="stack small">
-        <div><b>${S.shortlist.length} approved books</b>, minus the ones this class already read<div class="chips" style="margin-top:6px">${S.shortlist.map((b) => { const read = S.units.find((u) => u.text?.entity_id && u.text.entity_id === b.entity_id); return `<span class="chip" ${read ? 'style="opacity:.55;text-decoration:line-through"' : ''}>${esc(b.matched_name || b.name)}</span>`; }).join('')}</div></div>
+        <div><b>${S.shortlist.length} approved books</b>, minus the ones this class already read<div class="chips" style="margin-top:6px">${S.shortlist.map((b) => { const read = S.units.find((u) => u.text?.entity_id && u.text.entity_id === b.entity_id); return `<span class="chip" ${read ? 'style="opacity:.55;text-decoration:line-through"' : ''}>${esc(b.name)}</span>`; }).join('')}</div></div>
         <div><b>${S.students.length} students</b>, ${S.students.reduce((a, s) => a + s.seed_count, 0)} favorites in Qloo</div>
         <div><b>Bridge clips allowed:</b> ${S.klass.ratings.map(esc).join(', ')}</div>
         <div><b>Students left out of earlier units count extra.</b></div>
@@ -458,15 +460,16 @@ function pageUnit(id) {
             let what;
             if (s.no_favorites) what = `${statusChip('nofav')}<span>No favorites on file yet. <a href="#/students/${st.id}">Read the survey</a></span>`;
             else if (s.way_in) what = `${statusChip('way_in', ` · #${s.rank} of ${s.of}`)}<span>${esc(wn?.note || (s.via ? `via ${s.via}` : ''))}</span>`;
-            else if (s.bridge) what = `${statusChip('bridge')}<span>${typeIcon(s.bridge.type)} <b>${esc(s.bridge.name)}</b> <span class="tiny">${esc(s.bridge.content_rating || '')}${s.bridge.year ? ` · ${s.bridge.year}` : ''}</span></span><span>${esc(bn?.note || (s.bridge.via ? `connects ${s.bridge.via} to the book` : ''))}</span>${s.bridge.shared_tags?.length ? `<span class="tiny">shares with the book: ${esc(s.bridge.shared_tags.join(', '))}</span>` : ''}`;
+            else if (s.bridge) what = `${statusChip('bridge')}<span>${typeIcon(s.bridge.type)} <b>${esc(s.bridge.name)}</b> <span class="tiny">${esc(s.bridge.content_rating || '')}${s.bridge.year ? ` · ${s.bridge.year}` : ''}</span></span><span>${esc(bn?.note || (s.bridge.via ? `connects ${s.bridge.via} to the book` : ''))}</span>${s.bridge.book_rank ? `<span class="tiny">#${s.bridge.book_rank} of ${s.bridge.of} films readers of this book like · #${s.bridge.student_rank} of those for ${esc(st.first_name)}</span>` : ''}`;
             else if (s.bridge_searched === false) what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span class="tiny">Bridge clips were not searched (picked before Way In).</span>`;
-            else what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span>No bridge clip found. Plan a one-to-one check-in.${s.outside ? ` Independent-reading idea: <b>${esc(s.outside.name)}</b>${s.outside.via ? ` (via ${esc(s.outside.via)})` : ''}.` : ''}</span>`;
+            else what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span>No bridge clip found. Plan a one-to-one check-in.${s.outside ? ` Independent-reading idea: <b>${esc(title(s.outside.name))}</b>${s.outside.via ? ` (via ${esc(s.outside.via)})` : ''}.` : ''}</span>`;
             return `<div class="roster-row"><a class="who" href="#/students/${st.id}" style="text-decoration:none;color:inherit">${avatar(st, true)}${esc(st.first_name)}</a><div class="what">${what}</div></div>`;
           })
           .join('')}</div>
       </section>
       ${doc ? `<section class="card"><div class="card-head"><h2>Day one</h2></div><p>${esc(doc.opening)}</p>
-        ${p.common_ground?.length ? `<p class="tiny" style="margin-top:8px">Common ground from Qloo compare (class favorites vs. this book): ${esc(p.common_ground.map((t) => t.name).join(', '))}</p>` : ''}
+        ${p.lead_ins?.length ? `<p class="tiny" style="margin-top:8px">Favorites that lead into this book: ${esc(p.lead_ins.map((l) => `${l.name} (${l.students.join(', ')})`).join('; '))}</p>` : ''}
+        ${p.book_tags?.length ? `<p class="tiny">Qloo tags for the book: ${esc(p.book_tags.join(', '))}</p>` : ''}
         ${doc.discussion_starters?.length ? `<h3 style="margin:14px 0 6px">Discussion starters</h3><ul class="prompts">${doc.discussion_starters.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}</section>` : ''}
     </div>
     <div class="grid">

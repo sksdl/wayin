@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup } from './helpers.js';
 setup();
-const { topK, studentRanking, rankTexts, pickBridge, termRecord, unitStatus } = await import('../server/planner.js');
+const { topK, classRankings, isWayIn, rankTexts, pickBridge, termRecord, unitStatus } = await import('../server/planner.js');
 
 const e = (id, affinity, explain = {}) => ({ entity_id: id, name: id, affinity, explain });
 
@@ -12,20 +12,29 @@ test('a way in is the top 3 of the unread list (fewer only when the list is tiny
   assert.equal(topK(3), 2);
 });
 
-test('a student ranking orders the shortlist by Qloo affinity and keeps the strongest seed', () => {
-  const r = studentRanking([e('b2', 0.4), e('b1', 0.9, { s1: 0.2, s2: 0.8 }), e('x', 0.99)], ['b1', 'b2']);
-  assert.deepEqual(Object.keys(r), ['b1', 'b2']);
-  assert.equal(r.b1.rank, 1);
-  assert.equal(r.b1.via, 's2');
-  assert.equal(r.x, undefined, 'books off the list are ignored');
+test('rankings are by fit over the class, not raw affinity, and keep the strongest seed', () => {
+  // Everyone scores P highest (a popular book); s2 stands out on Q.
+  const raw = {
+    s1: [e('P', 0.9, { a: 1 }), e('Q', 0.5, { a: 1 }), e('x', 0.99)],
+    s2: [e('P', 0.85, { b: 0.3, c: 0.7 }), e('Q', 0.8, { b: 0.9, c: 0.1 })],
+    s3: [e('P', 0.88), e('Q', 0.45)],
+  };
+  const r = classRankings(raw, ['P', 'Q']);
+  assert.equal(r.s2.Q.rank, 1, 'Q fits s2 far better than the class, so it ranks first for s2');
+  assert.equal(r.s2.Q.via, 'b');
+  assert.ok(r.s2.Q.z > 0);
+  assert.equal(r.s1.x, undefined, 'books off the list are ignored');
+  assert.ok(!isWayIn(r.s3.Q, 3) || r.s3.Q.z > 0, 'a way in needs a fit above the class average');
+  assert.equal(isWayIn({ rank: 1, z: -0.2 }, 3), false);
+  assert.equal(isWayIn({ rank: 3, z: 0.1 }, 3), true);
 });
 
 test('ranking counts ways in and weights students left out before', () => {
   const books = [{ entity_id: 'A', name: 'A' }, { entity_id: 'B', name: 'B' }, { entity_id: 'C', name: 'C' }, { entity_id: 'D', name: 'D' }, { entity_id: 'E', name: 'E' }];
   const rankings = {
-    s1: { A: { rank: 1 }, B: { rank: 3 } },
-    s2: { B: { rank: 1 }, A: { rank: 4 } },
-    s3: { B: { rank: 2 }, A: { rank: 5 } },
+    s1: { A: { rank: 1, z: 1 }, B: { rank: 3, z: 0.2 } },
+    s2: { B: { rank: 1, z: 1 }, A: { rank: 4, z: -0.5 } },
+    s3: { B: { rank: 2, z: 0.4 }, A: { rank: 5, z: -1 } },
   };
   const { k, rows } = rankTexts(books, rankings, { s1: 2 });
   assert.equal(k, 3);
@@ -38,16 +47,15 @@ test('ranking counts ways in and weights students left out before', () => {
   assert.deepEqual(A.priority_reached, ['s1']);
 });
 
-test('a bridge needs both the book and the student behind it', () => {
-  const cands = [
-    e('onlyBook', 0.9, { BOOK: 0.95, s1: 0.05 }),
-    e('onlyStudent', 0.9, { BOOK: 0.1, s1: 0.9 }),
-    e('both', 0.7, { BOOK: 0.5, s1: 0.3, s2: 0.2 }),
-  ];
-  const b = pickBridge(cands, 'BOOK', ['s1', 's2']);
-  assert.equal(b.entity_id, 'both');
-  assert.equal(b.student_share, 0.5);
-  assert.equal(pickBridge([cands[0], cands[1]], 'BOOK', ['s1']), null);
+test('a bridge clip is the film both lists rank highest, within the student top 5', () => {
+  const bookSide = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'].map((id) => e(id, null));
+  const studentSide = [e('f7', 0.95), e('f3', 0.9), e('f1', 0.5), e('f6', 0.4), e('f5', 0.3), e('f2', 0.2), e('x', 0.99)];
+  const b = pickBridge(bookSide, studentSide);
+  assert.equal(b.entity_id, 'f1', 'book #1 + student #3 (4) beats book #3 + student #2 (5) and book #7 + student #1 (8)');
+  assert.equal(b.book_rank, 1);
+  assert.equal(b.student_rank, 3);
+  assert.equal(pickBridge(bookSide, [e('x', 0.9)]), null, 'films off the book list do not count');
+  assert.equal(pickBridge(bookSide, studentSide, { skip: ['f1'] }).entity_id, 'f3');
 });
 
 test('term record: absent and not enrolled are not counted; did-not-connect counts as missed', () => {

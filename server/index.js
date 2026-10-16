@@ -4,7 +4,8 @@ import path from 'node:path';
 import { config, ROOT } from './config.js';
 import { Workspaces, newId } from './store.js';
 import { termRecord } from './planner.js';
-import { resolveStudent, resolveShortlist, shortlistBooks, classRanks, studentRanks, signalsOf, seedName, readBookIds, outsidePicks } from './profiles.js';
+import { resolveStudent, resolveShortlist, shortlistBooks, classRanks, signalsOf, seedName, readBookIds, outsidePicks } from './profiles.js';
+import { isWayIn } from './planner.js';
 import { intake, plan, debrief } from './agent.js';
 import { qlooStats } from './qloo.js';
 import { modelStatus } from './llm.js';
@@ -188,7 +189,7 @@ async function prepareDemo(ws) {
         const reactions = {};
         ws.students.forEach((st) => {
           const r = ranks.rankings[st.id]?.[book.entity_id];
-          const wayIn = Boolean(r && r.rank <= k);
+          const wayIn = isWayIn(r, k);
           stud[st.id] = { rank: r?.rank ?? null, of: ranks.books.length, way_in: wayIn, via: wayIn && r.via ? seedName(st, r.via) : null, bridge: null, bridge_searched: false, no_favorites: !signalsOf(st).seeds.length };
           if (st.new_student) return; // joined after these units
           // Sample reactions: a fixed pattern for the demo, not derived from the Qloo ranks.
@@ -257,13 +258,16 @@ async function api(req, res, url) {
     const readTitle = new Map(ws.units.filter((u) => u.text?.entity_id).map((u) => [u.text.entity_id, u.title]));
     const all = shortlistBooks(ws);
     const unread = all.filter((b) => !read.has(b.entity_id));
-    const { ranking, request } = await studentRanks(st, unread);
-    if (request) reqs.push({ ...request, label: `${st.first_name}: ranking of the unread list` });
+    // The ranking is relative to the class, so the whole class is scored (cached after the first time).
+    for (const other of ws.students) if (other.id !== st.id) reqs.push(...(await resolveStudent(other)));
+    const cr = await classRanks(ws, ws.students.filter((x) => signalsOf(x).seeds.length), { skipRead: true });
+    const ranking = cr.rankings[st.id] || {};
+    reqs.push(...cr.requests.filter((r) => !r.cached));
     const o = await outsidePicks(st, all.map((b) => b.entity_id), 3);
     if (o.request) reqs.push({ ...o.request, label: `${st.first_name}: best books outside the list` });
     workspaces.save(ws.id);
     const rows = unread
-      .map((b) => ({ ...b, rank: ranking[b.entity_id]?.rank ?? null, via: ranking[b.entity_id]?.via ? seedName(st, ranking[b.entity_id].via) : null }))
+      .map((b) => ({ ...b, rank: ranking[b.entity_id]?.rank ?? null, way_in: isWayIn(ranking[b.entity_id], cr.ranked.k), above: (ranking[b.entity_id]?.z ?? 0) > 0, via: ranking[b.entity_id]?.via ? seedName(st, ranking[b.entity_id].via) : null }))
       .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
     const readRows = all.filter((b) => read.has(b.entity_id)).map((b) => ({ ...b, read_in: readTitle.get(b.entity_id) }));
     return json(res, 200, { rows, read: readRows, of: unread.length, outside: o.picks, requests: reqs });

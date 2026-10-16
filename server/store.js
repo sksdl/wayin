@@ -66,6 +66,7 @@ export class Workspaces {
     if (!data) return;
     this.remember(id, data);
     data.touched = new Date().toISOString();
+    fs.mkdirSync(this.dir, { recursive: true });
     const tmp = `${this.file(id)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 1));
     fs.renameSync(tmp, this.file(id));

@@ -181,18 +181,22 @@ function explainOf(e) {
   return out;
 }
 
+// Some names arrive HTML-escaped ("Black Holes &amp; Time Warps").
+const ENTITIES = { '&amp;': '&', '&quot;': '"', '&#39;': "'", '&apos;': "'", '&lt;': '<', '&gt;': '>' };
+export const unescapeHtml = (s) => (typeof s === 'string' ? s.replace(/&(amp|quot|#39|apos|lt|gt);/g, (m) => ENTITIES[m]) : s);
+
 export function normalizeEntity(e) {
   const type = shortType(e.subtype || e.types?.[0] || e.type);
   const p = e.properties || {};
   return {
     entity_id: e.entity_id || e.id,
-    name: e.name,
+    name: unescapeHtml(e.name),
     type,
     year: yearOf(e, type),
-    disambiguation: e.disambiguation || null,
+    disambiguation: unescapeHtml(e.disambiguation) || null,
     affinity: Number.isFinite(e.query?.affinity) ? e.query.affinity : null,
     popularity: Number.isFinite(e.popularity) ? e.popularity : null,
-    description: englishText(p.short_descriptions) || p.short_description || null,
+    description: unescapeHtml(englishText(p.short_descriptions) || p.short_description) || null,
     image: imageOf(e),
     genres: (p.primary_genres || p.genres || []).slice(0, 4),
     notable: Array.isArray(p.notable_songs) ? p.notable_songs.slice(0, 3) : [],
