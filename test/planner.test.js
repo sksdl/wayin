@@ -84,6 +84,11 @@ test('clip rules keep family and teen films and drop adult-skewed ones', () => {
   assert.equal(clipOk(f('PG', 1977, ['Action', 'Adventure', 'Fantasy', 'Sci-Fi'], ['Family oriented']), R), true);
   assert.equal(clipOk(f('PG', 2010, ['Comedy', 'Drama', 'Romance'], ['Teenager', 'First crush']), R), true);
   assert.equal(clipOk(f('PG', 2007, ['Comedy', 'Drama', 'Romance'], ['Restaurant kitchen']), R), false, 'adult romance');
+  assert.equal(clipOk(f('PG', 2023, ['Drama'], ['Family relationships']), R), false, 'a tag that only mentions family');
+  assert.equal(clipOk(f('PG', 2016, ['Drama', 'Romance'], ['Family road trip', 'High school bully']), R), false, 'adult drama with partial tag matches');
+  assert.equal(clipOk(f('PG', 2010, ['Adventure', 'Comedy', 'Drama', 'Romance']), R), false, 'adult romance with an adventure genre');
+  assert.equal(clipOk(f('TV-PG', 2017, ['Documentary', 'Family']), R), false, 'documentary');
+  assert.equal(clipOk(f('PG', 1990, ['Adventure', 'Comedy', 'Family', 'Fantasy', 'Horror', 'Mystery']), R), false, 'horror as the fifth genre');
   assert.equal(clipOk(f('PG-13', 2015, ['Family']), R), false, 'rating outside the class list');
   assert.equal(clipOk(f(null, 2015, ['Family']), R), false, 'no rating');
 });

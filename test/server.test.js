@@ -52,6 +52,18 @@ test('a pick streams events and ends with a saved unit', async () => {
   assert.ok(!['Hatchet', 'The Giver'].includes(result.unit.plan.chosen.name), 'books already read are skipped');
   const state = await (await a('/api/state')).json();
   assert.ok(state.units.some((u) => u.id === result.unit.id && u.status === 'planned'));
+  // Rejecting clips never takes the class past three films.
+  let unit = result.unit;
+  for (let round = 0; round < 3; round++) {
+    for (const [sid, s] of Object.entries(unit.plan.students)) {
+      if (!s.bridge) continue;
+      const r = await a(`/api/units/${unit.id}/clip`, { method: 'POST', body: JSON.stringify({ student_id: sid, entity_id: s.bridge.entity_id }) });
+      assert.equal(r.status, 200);
+      unit = (await r.json()).unit;
+      const films = new Set(Object.values(unit.plan.students).map((x) => x.bridge?.entity_id).filter(Boolean));
+      assert.ok(films.size <= 3 && unit.plan.clips.length === films.size, `at most three films (${films.size})`);
+    }
+  }
 });
 
 test('security headers and safe errors', async () => {

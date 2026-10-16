@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test test/planner.test.js test/qloo.test.js test/flow.test.js test/server.test.js",
-    "check": "node scripts/check-setup.js"
+    "check": "node scripts/check-setup.js",
+    "compare": "node scripts/compare-model.js"
   }
 }

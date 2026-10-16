@@ -198,7 +198,7 @@ export function normalizeEntity(e) {
     popularity: Number.isFinite(e.popularity) ? e.popularity : null,
     description: unescapeHtml(englishText(p.short_descriptions) || p.short_description) || null,
     image: imageOf(e),
-    genres: (p.primary_genres || p.genres || []).slice(0, 4),
+    genres: p.primary_genres || p.genres || [],
     notable: Array.isArray(p.notable_songs) ? p.notable_songs.slice(0, 3) : [],
     duration: Number.isFinite(p.duration) ? p.duration : null,
     content_rating: typeof p.content_rating === 'string' ? p.content_rating : null,

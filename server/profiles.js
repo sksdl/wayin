@@ -8,19 +8,24 @@ const AGE_OK = /^(middle grade|childrens?|children's|young adult|13-17|9-12)$/i;
 const ADULT = /^(adult|erotica|romance|new adult|18\+)$/i;
 // Films for a 13-year-old class. The book's audience includes adults, so the rating alone let
 // through titles like a papal thriller. A clip needs a youth genre or a teen / family tag, no
-// thriller, crime, horror or war genre, and a PG from before 1985 (when PG-13 arrived) must be a
-// family film.
+// thriller, crime, horror, war or documentary genre, and a PG from before 1985 (when PG-13
+// arrived) must be a family film. Tags count only as whole names: "Family relationships" on an
+// adult drama is not a family film. A romance also needs a family genre or a teen tag, since
+// adult romances often carry an adventure or comedy genre.
 const YOUTH_GENRES = new Set(['family', 'animation', 'adventure', 'fantasy', 'sci-fi', 'musical', 'sport']);
-const BLOCK_GENRES = new Set(['thriller', 'crime', 'horror', 'war']);
-const YOUTH_TAG = /\b(teen|teenager|coming of age|high school|middle school|young adult|childhood|family)\b/i;
+const BLOCK_GENRES = new Set(['thriller', 'crime', 'horror', 'war', 'documentary']);
+const FAMILY_TAG = /^family( oriented| friendly| film| movie| adventure| comedy)?$/i;
+const TEEN_TAG = /^(kids|children|childhood|coming of age|teen( movie| comedy| drama)?|teenager|awkward teenager|teenage (boy|girl)( as protagonist)?|young adult( literature)?|middle school)$/i;
 export function clipOk(e, ratings) {
   if (!e.content_rating || !ratings.includes(e.content_rating)) return false;
   const genres = (e.genres || []).map((g) => g.toLowerCase());
-  const tags = (e.tags || []).map((t) => t.name || '');
+  const tags = (e.tags || []).map((t) => (t.name || '').trim());
   if (genres.some((g) => BLOCK_GENRES.has(g))) return false;
-  const family = genres.includes('family') || genres.includes('animation') || tags.some((t) => /family/i.test(t));
+  const family = genres.includes('family') || genres.includes('animation') || tags.some((t) => FAMILY_TAG.test(t));
+  const teen = tags.some((t) => TEEN_TAG.test(t));
   if (e.content_rating === 'PG' && e.year && e.year < 1985 && !family) return false;
-  return genres.some((g) => YOUTH_GENRES.has(g)) || tags.some((t) => YOUTH_TAG.test(t));
+  if (genres.includes('romance') && !family && !teen) return false;
+  return family || teen || genres.some((g) => YOUTH_GENRES.has(g));
 }
 
 export function norm(s) {
@@ -172,18 +177,22 @@ export async function classRanks(ws, students, { skipRead = false } = {}) {
   const books = all.filter((b) => !read.has(b.entity_id));
   const raw = {};
   const bookTags = {};
+  const bookInfo = {};
   const requests = [];
   await Promise.all(
     students.map(async (st) => {
       const { entities, request } = await studentRaw(st, all);
       raw[st.id] = entities;
-      for (const e of entities) if (!bookTags[e.entity_id]?.length) bookTags[e.entity_id] = e.tags || [];
+      for (const e of entities) {
+        if (!bookTags[e.entity_id]?.length) bookTags[e.entity_id] = e.tags || [];
+        if (!bookInfo[e.entity_id] && e.description) bookInfo[e.entity_id] = { description: e.description };
+      }
       if (request) requests.push({ ...request, label: `${st.first_name}: approved list against their favorites` });
     }),
   );
   const rankings = classRankings(raw, books.map((b) => b.entity_id));
   const ranked = rankTexts(books, rankings, leftOutCounts(ws.students, ws.units));
-  return { books, rankings, ranked, bookTags, requests };
+  return { books, rankings, ranked, bookTags, bookInfo, requests };
 }
 
 // Bridge clips for one book. First the films the book's readers also like (one call per book,

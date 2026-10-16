@@ -200,7 +200,7 @@ Tools:
 - get_class: students, their favorites, how earlier units went for each of them, the shortlist, and the teacher's note.
 - rank_texts: Qloo ranks the shortlist for every student. Returns each book with who has a way in, who does not, and which previously left-out students it reaches.
 - find_bridges(book_id): for the students without a way in to that book, picks up to three clip films for the class, says who each is for, and who is still left with nothing.
-- look_at_book(book_id): the book's Qloo genre tags and the class favorites that lead students into it. Use it for the opening day.
+- look_at_book(book_id): the book's Qloo genre tags, its Qloo description and the class favorites that lead students into it. Use it for the opening day.
 - choose_text(book_id, reason): your decision. Write the reason as "Picked <title> because ...", naming the numbers you compared.
 - submit_unit_plan: the plan for the teacher.
 How to decide: call get_class and rank_texts. Take the top two or three books and call find_bridges on each. Prefer the book that leaves the fewest students with nothing, then the one that reaches students left out of earlier units, then the most direct ways in. Follow the teacher's note when it rules a book out or asks for something (for example a different genre from last unit), and say so in the reason. The reason names the numbers you compared.
@@ -209,7 +209,7 @@ Plan rules:
 - Refer to students by first name only. Do not use he, she, his or her for students.
 - bridge_notes: one line per bridged student, in this form: "Readers of <book> also like <film>; it is #<rank_of_those_for_student> of those films for <first name> (favorite behind it: <favorite_behind_it>)." Add the shared tags if there are any. Do not say the film "connects" to anything, and do not describe the film beyond qloo_description. Use only bridges returned for the chosen book.
 - opening: two or three sentences for day one, built on the book's tags and the favorites that lead into it (from look_at_book). Do not describe the plot.
-- discussion_starters: three open questions about the book's themes. Use only the book's title, year, description and tags from the tools. Do not invent plot details or character names.
+- discussion_starters: three open questions about the book's themes. Use only the book's title, year, description and tags from look_at_book; when there are no tags, use the description. Do not invent plot details or character names, and do not build all three questions on the title.
 - teacher_notes: at most four short items, only of these kinds: students still without a way in or a bridge (suggest a one-to-one check-in), students with no favorites on file yet, and what to keep away from for whom. If none apply, return an empty list. No comments about the tools, the data or these rules.
 Plain, short sentences. No marketing words, no em dashes.`;
 
@@ -321,7 +321,7 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
     },
     {
       name: 'find_bridges',
-      description: 'For students without a way in to this book, find a film or show bridge for each.',
+      description: 'For students without a way in to this book, pick up to three clip films for the class and say who each is for and who is still left with nothing.',
       parameters: S.obj({ book_id: S.str }),
       run: async ({ book_id }) => {
         const b = await runBridges(book_id);
@@ -336,13 +336,13 @@ export async function plan(ws, { teacherNote = '', title = '' } = {}, onEvent = 
     },
     {
       name: 'look_at_book',
-      description: "The book's Qloo genre tags and the favorites that lead students into it.",
+      description: "The book's Qloo genre tags, its Qloo description and the favorites that lead students into it.",
       parameters: S.obj({ book_id: S.str }),
       run: async ({ book_id }) => {
         await runRank();
         if (!books.some((b) => b.entity_id === book_id)) return { error: 'Not a shortlisted book id' };
         ground = groundFor(book_id);
-        return { tags: ground.tags, favorites_that_lead_in: ground.lead_ins.map((l) => `${l.name} (${l.students.join(', ')})`) };
+        return { tags: ground.tags, description: (ranks.bookInfo?.[book_id]?.description || '').slice(0, 600) || null, favorites_that_lead_in: ground.lead_ins.map((l) => `${l.name} (${l.students.join(', ')})`) };
       },
     },
     {
@@ -529,7 +529,7 @@ export function templatePlan(ws, chosen, ground, ranks) {
 const DEBRIEF_SYSTEM = `A unit just ended. The teacher logged how each student took the class book (hooked = finished or asked for more, engaged = kept up and joined in, not_engaged = did not connect, absent = missed most of the unit) and wrote a short note.
 Your jobs:
 1. If the note mentions a new favorite for a student (for example "Jonah said it reminded them of Avatar"), search Qloo for it and add it with add_favorite. Only add what the note says.
-2. Write one short note per student who was not absent, for the teacher's own records: how they took the book and one idea for next time that builds on it. Facts only from the log and the note. No grades, no behavior labels, nothing about health or family. Refer to the student by first name; do not use he, she, him, her or his. Vary the wording. No em dashes.
+2. Write one short note per student who was not absent, for the teacher's own records: how they took the book and one idea for next time that builds on it. Facts only from the log and the note. No grades, no behavior labels, nothing about health or family. Refer to the student by first name; do not use he, she, him, her or his. The bridge clip was for this book only; do not suggest reusing it for the next book. Vary the wording and do not start every idea with "Next time". No em dashes.
 3. Call save_notes once at the end.`;
 
 export async function debrief(ws, unit, reactions, teacherNote, onEvent = () => {}, { useModel = true } = {}) {

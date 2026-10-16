@@ -169,10 +169,12 @@ function pageToday() {
   const units = S.term.units;
   const recs = S.students.map((st) => ({ st, r: S.term.students[st.id] }));
   const streak = recs.filter(({ r }) => r.streak >= 2);
+  const streakK = streak.length ? Math.min(...streak.map(({ r }) => r.streak)) : 0;
+  const streakBefore = streakK > 0 && S.term.units.slice(-streakK).every((u) => u.sample);
   const unitCounts = units.map((u, i) => {
     const present = recs.filter(({ r }) => !['absent', 'not_enrolled'].includes(r.units[i]?.status));
     const reached = present.filter(({ r }) => ['way_in', 'bridge'].includes(r.units[i]?.status));
-    return `${esc(u.text)}: ${reached.length} of ${present.length} reached`;
+    return `${esc(u.text)}${u.sample ? ' (before Way In)' : ''}: ${reached.length} of ${present.length} reached`;
   });
   const anySample = units.some((u) => u.sample);
   return `
@@ -195,7 +197,7 @@ function pageToday() {
       <div class="card-head"><h2>Who had a way in this term?</h2><span class="tiny">${esc(unitCounts.join(' · '))}</span></div>
       <p class="small muted" style="margin-bottom:10px">Way in: the class book fit the student better than it fit the class on average, and was in the student’s top 3 by that measure. Bridge clip: a film that ranks high both among films the book’s readers like and for the student’s own favorites. Students who had nothing, or had something and didn’t connect, count extra in the next pick.</p>
       ${anySample ? '<p class="tiny" style="margin-bottom:10px">Units 1 and 2 were picked before Way In, so nobody got a clip. Their ways in are Qloo looking back; the reactions in them are sample data for the demo. <span class="miss">✕</span> = had something but didn’t connect.</p>' : ''}
-      ${streak.length ? `<div class="coverage warn" style="margin-bottom:10px">${ICONS.alert}<span>${streak.length} student${streak.length > 1 ? 's' : ''} missed the last ${Math.min(...streak.map(({ r }) => r.streak))} or more units in a row: ${esc(joinNames(streak.map(({ st }) => st.first_name)))}. The next pick counts them extra.</span></div>` : ''}
+      ${streak.length ? `<div class="coverage warn" style="margin-bottom:10px">${ICONS.alert}<span>${streak.length} student${streak.length > 1 ? 's' : ''} missed ${streakK === 2 ? 'both of the last two units' : `each of the last ${streakK} units`} (nothing, or something that didn’t connect): ${esc(joinNames(streak.map(({ st }) => st.first_name)))}.${streakBefore ? ' Those units were picked before Way In, without clips.' : ''} The next pick counts them extra.</span></div>` : ''}
       <div class="table-wrap"><table class="term"><thead><tr><th>Student</th>${units.map((u) => `<th>${esc(u.text)}${u.sample ? ' <span class="tiny">(sample)</span>' : ''}</th>`).join('')}<th>Favorites</th></tr></thead><tbody>
       ${recs
         .map(({ st, r }) => `<tr class="${r.streak >= 2 ? 'flag' : ''}"><td><a href="#/students/${st.id}" class="row nowrap" style="gap:8px;color:inherit">${avatar(st, true)}${esc(st.first_name)} ${esc(st.last_initial)}.</a></td>${r.units.map((u) => `<td>${termChip(u)}</td>`).join('')}<td class="tiny">${st.seed_count}</td></tr>`)
@@ -461,12 +463,14 @@ function pageUnit(id) {
             const s = p.students[st.id] || {};
             const wn = byId(st.id, doc?.way_in_notes);
             const bn = byId(st.id, doc?.bridge_notes);
+            // A top-3 place that is still below the class average is not a way in; say so next to the rank.
+            const noneRank = (x) => (x.rank ? ` · #${x.rank} of ${x.of}${x.rank <= (p.k || 3) ? ', below the class average' : ''}` : '');
             let what;
             if (s.no_favorites) what = `${statusChip('nofav')}<span>No favorites on file yet. <a href="#/students/${st.id}">Read the survey</a></span>`;
             else if (s.way_in) what = `${statusChip('way_in', ` · #${s.rank} of ${s.of}`)}<span>${esc(wn?.note || (s.via ? `via ${s.via}` : ''))}</span>`;
             else if (s.bridge) what = `${statusChip('bridge')}<span>${typeIcon(s.bridge.type)} <b>${esc(s.bridge.name)}</b> <span class="tiny">${esc(s.bridge.content_rating || '')}${s.bridge.year ? ` · ${s.bridge.year}` : ''}</span></span><span class="small">Readers of ${esc(p.chosen.name)} also like it; #${s.bridge.student_rank} of those films for ${esc(st.first_name)}${s.bridge.via ? ` (favorite behind it: ${esc(s.bridge.via)})` : ''}.${s.bridge.shared_tags?.length ? ` Shared with the book: ${esc(s.bridge.shared_tags.join(', '))}.` : ''}</span>${!done && !teacherPicked ? `<button class="btn small ghost" data-noclip="${st.id}" data-e="${esc(s.bridge.entity_id)}">Not this clip</button>` : ''}`;
-            else if (s.bridge_searched === false) what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span class="tiny">Bridge clips were not searched (picked before Way In).</span>`;
-            else what = `${statusChip('none', s.rank ? ` · #${s.rank} of ${s.of}` : '')}<span>No bridge clip found. Plan a one-to-one check-in.${s.outside ? ` Independent-reading idea: <b>${esc(title(s.outside.name))}</b>${s.outside.via ? ` (via ${esc(s.outside.via)})` : ''}.` : ''}</span>`;
+            else if (s.bridge_searched === false) what = `${statusChip('none', noneRank(s))}<span class="tiny">Bridge clips were not searched (picked before Way In).</span>`;
+            else what = `${statusChip('none', noneRank(s))}<span>No bridge clip found. Plan a one-to-one check-in.${s.outside ? ` Independent-reading idea: <b>${esc(title(s.outside.name))}</b>${s.outside.via ? ` (via ${esc(s.outside.via)})` : ''}.` : ''}</span>`;
             return `<div class="roster-row"><a class="who" href="#/students/${st.id}" style="text-decoration:none;color:inherit">${avatar(st, true)}${esc(st.first_name)}</a><div class="what">${what}</div></div>`;
           })
           .join('')}</div>
@@ -496,7 +500,7 @@ function pageUnit(id) {
       return `<div class="rx-item"><span class="row" style="gap:8px">${avatar(st, true)}${esc(st.first_name)}</span><button class="rx ${v}" data-s="${st.id}" data-v="${v}" ${done ? 'disabled' : ''}>${RX_LABEL[v]}</button></div>`;
     }).join('')}</div>
     ${done ? '' : `<div class="row" style="margin-top:8px"><button class="btn small ghost" id="quick-fill">Mark everyone not yet tapped as “Kept up”</button></div>
-    <label class="field" style="margin-top:12px">Teacher note (optional)<textarea id="t-note" placeholder="For example: Lucas said they would rather read something like Ghost by Jason Reynolds. Nia read ahead after the bridge clip."></textarea></label>
+    <label class="field" style="margin-top:12px">Teacher note (optional, demo only: no real names)<textarea id="t-note" placeholder="For example: Lucas said they would rather read something like Ghost by Jason Reynolds. Nia read ahead after the bridge clip."></textarea></label>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="save-rx">${ICONS.check} Close the unit and update profiles</button><span class="small muted" id="rx-status"></span></div>`}
     <div id="rx-out" style="margin-top:12px">${done ? debriefView(u) : ''}</div>
   </section>`;

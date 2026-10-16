@@ -10,7 +10,7 @@ Live demo: **https://wayin.aii.ai.kr** (every visitor gets their own copy of a f
 
 ## The problem
 
-In 2023, 14% of US 13-year-olds said they read for fun almost every day, down from 27% in 2012 (NAEP Long-Term Trend, NCES). Many middle school English classes still read a few whole-class novels each term, picked by the teacher from a department-approved list, and many teachers hand out an interest survey in the first weeks. The survey rarely shapes which book the class reads. Way In keeps a record of which students each pick leaves out.
+In 2023, 14% of US 13-year-olds said they read for fun almost every day, down from 27% in 2012 (NAEP Long-Term Trend, NCES). Many middle school English classes still read a few whole-class novels each term, picked by the teacher from a department-approved list, and many teachers hand out an interest survey in the first weeks. Way In keeps a record of which students each pick leaves out.
 
 How it works in the app:
 
@@ -27,7 +27,7 @@ All calls are server-side `GET` requests to the hackathon API with the `X-Api-Ke
 | Survey titles to entities | `/search` with `query` and `types` (`urn:entity:tv_show`, `movie`, `artist`, `videogame`, `book`, `person`) | Turn "FC 24" into an entity ID. Ambiguous matches go to the teacher. |
 | Dislikes to tags | `/v2/tags` with `filter.query`, `filter.parents.types=urn:entity:movie,urn:entity:tv_show` | "Not into scary movies" becomes `urn:tag:genre:media:horror`. |
 | Each student's ranking of the approved list | `/v2/insights` with `filter.type=urn:entity:book`, `signal.interests.entities` (that student's favorites), `filter.results.entities` (the approved books), `signal.demographics.age=24_and_younger`, `feature.explainability=true` | `filter.results.entities` restricts scoring to the list the teacher may choose from. Way In turns each score into a z-score within its book across the class, so a book counts for a student when it fits them better than it fits their classmates. Explainability says which favorite pulled the book up: "Ghost leads into Long Way Down". |
-| Bridge clips | 1) `/v2/insights` with `filter.type=urn:entity:movie`, the book as the only signal, `filter.content_rating` (the class's allowed ratings, G and PG by default). 2) The same films with `filter.results.entities`, scored against each student's favorites, `filter.exclude.tags` for the student's dislikes, `feature.explainability=true` | Each student keeps up to five films by combined place on both lists, ordered by fit over the other students. A greedy cover then picks at most three films for the class. Before any of that, the book's films are checked for a 13-year-old class: no thriller, crime, horror or war genre; a family, animation, adventure, fantasy, sci-fi, musical or sport genre, or a teen or family tag; and a PG from before 1985 (before PG-13 existed) only if it is a family film. Titles without a rating, or with one outside the class's list, are dropped. The teacher can reject a clip ("Not this clip") and the student gets their next option. |
+| Bridge clips | 1) `/v2/insights` with `filter.type=urn:entity:movie`, the book as the only signal, `filter.content_rating` (the class's allowed ratings; by default G and PG, plus TV-Y7 to TV-PG for TV films). 2) The same films with `filter.results.entities`, scored against each student's favorites, `filter.exclude.tags` for the student's dislikes, `feature.explainability=true` | Each student keeps up to five films by combined place on both lists, ordered by fit over the other students. A greedy cover then picks at most three films for the class. Before any of that, the book's films are checked for a 13-year-old class: no thriller, crime, horror, war or documentary genre (all of the film's genres are checked); a family, animation, adventure, fantasy, sci-fi, musical or sport genre, or a teen or family tag (whole tag names only, so "Family relationships" does not count); a romance only with a family genre or a teen tag; and a PG from before 1985 (before PG-13 existed) only if it is a family film. Titles without a rating, or with one outside the class's list, are dropped. The teacher can reject a clip ("Not this clip") and the student gets their next option; the class still keeps at most three films, so a student whose remaining options are all new films gets a one-to-one check-in instead. |
 | Independent-reading idea | `/v2/insights` with `filter.type=urn:entity:book`, the student's favorites, the approved list in `filter.exclude.entities`, the student's dislikes in `filter.exclude.tags` | For students a pick leaves with nothing, and on each student's page. Only books Qloo tags for young readers (Middle Grade, Young Adult, 13-17), not Adult, and with none of the student's dislikes among their tags. |
 | Opening day | Tags on the chosen book from the insights results, and the favorites that lead students into it | "Put Smile, Ghost and Ms. Marvel on the board: favorites in this class that lead into New Kid." |
 
@@ -35,23 +35,23 @@ Responses are cached on the server (the hackathon FAQ allows private caching; th
 
 ### Why this needs Qloo
 
-A language model will rank the list too, from its own sense of genres and authors. On the same five students, GPT-6.1 alone (favorites and the ten unread titles, nothing else) and Way In agreed on 8 of the 15 top-3 places:
+A language model will rank the list too, from its own sense of genres and authors. On the same five students, GPT-6.1 alone (favorites and the ten unread titles, nothing else) and Way In shared 7 of the 15 top-3 places:
 
 | Student | Favorites | GPT-6.1 alone, top 3 | Way In (fit over the class, favorite behind it) |
 |---|---|---|---|
-| Nia | Pokemon Scarlet, Roblox, Ghost, Jason Reynolds | Long Way Down, The Crossover, New Kid | Long Way Down (Ghost), Restart (Ghost), New Kid (Ghost) |
-| Kenji | Hamilton, Akeelah and the Bee, Lin-Manuel Miranda, Brown Girl Dreaming | The Crossover, Long Way Down, Esperanza Rising | Wonder, Long Way Down, Esperanza Rising (all via Brown Girl Dreaming) |
-| Zoe | Fortnite, MrBeast, Jumanji: Welcome to the Jungle, Diary of a Wimpy Kid | Holes, New Kid, Restart | Restart, The Crossover, Refugee (all via Diary of a Wimpy Kid) |
-| Sofia | Stranger Things, Wednesday, Olivia Rodrigo, Smile | Long Way Down, Holes, The Outsiders | Esperanza Rising, Restart, The Outsiders (all via Smile) |
-| Owen | Ms. Marvel, Coco, Karol G | New Kid, Esperanza Rising, A Wrinkle in Time | New Kid (Ms. Marvel), A Wrinkle in Time (Coco), The Crossover (Ms. Marvel) |
+| Nia | Pokemon Scarlet, Roblox, Ghost, Jason Reynolds | Long Way Down, The Crossover, Restart | Long Way Down (Ghost), Restart (Ghost), New Kid (Ghost) |
+| Kenji | Hamilton, Akeelah and the Bee, Lin-Manuel Miranda, Brown Girl Dreaming | The Crossover, Long Way Down, Esperanza Rising | Long Way Down, Wonder, Esperanza Rising (all via Brown Girl Dreaming) |
+| Zoe | Fortnite, MrBeast, Jumanji: Welcome to the Jungle, Diary of a Wimpy Kid | Holes, Restart, New Kid | Restart, The Crossover, Refugee (all via Diary of a Wimpy Kid) |
+| Sofia | Stranger Things, Wednesday, Olivia Rodrigo, Smile | Long Way Down, Holes, A Wrinkle in Time | Esperanza Rising, Restart, New Kid (all via Smile) |
+| Owen | Ms. Marvel, Coco, Karol G | New Kid, Esperanza Rising, The Crossover | New Kid (Ms. Marvel), A Wrinkle in Time (Coco), The Crossover (Ms. Marvel; below the class average, so not a way in) |
 
-(One model run on 2026-10-16; a second run changed one of Owen's titles.) The model's picks look reasonable, but nothing in them can be checked. Way In's come from what audiences of each favorite also like, compared with the rest of the class, and each names the favorite Qloo says carries the score. The bridge clips come from Qloo's audience for the book itself; a model has no list of what a book's readers watch.
+`npm run compare` builds this table against a running server, so the right column is what the app shows. Three model runs on 2026-10-16 shared 7, 6 and 7 places; the table shows the first. The model gives no reason that can be checked against data. Way In's picks come from what audiences of each favorite also like, compared with the rest of the class, and each names the favorite Qloo says carries the score. The bridge clips come from Qloo's audience for the book itself; a model has no list of what a book's readers watch.
 
 ### What the live data changed
 
 Three things in the design come from running the demo class against the hackathon API:
 
-- **Raw affinity is mostly shared.** Ranked by raw affinity, The Giver was in the top 3 of 15 of 17 students, Holes of 14 and The Crossover of 13, so a "way in" said little about the student. Scoring each book against the class average fixed that: each of the ten unread books is now in the top 3 of between 3 and 8 students, with lead-ins that make sense (Ghost leads Nia to Long Way Down, by the same author; Diary of a Wimpy Kid leads Zoe to Restart).
+- **Raw affinity is mostly shared.** Ranked by raw affinity, The Giver was in the top 3 of 15 of 17 students, Holes of 14 and The Crossover of 13, so a "way in" said little about the student. Scoring each book against the class average spread the top-3 places: each of the ten unread books is now in the top 3 of between 3 and 8 students, with lead-ins that make sense (Ghost leads Nia to Long Way Down, by the same author; Diary of a Wimpy Kid leads Zoe to Restart).
 - **Explainability splits evenly when there are few inputs.** A first version picked clips that both the book and the student's favorites pushed up by explainability share. With the book and one favorite as inputs, most shares came back between 50/50 and 60/40 and 97% of results passed a 20% test, so it let weak picks through. The two-list method replaced it.
 - **The book's audience includes adults.** For readers of these books, Qloo's TV results were mostly reality shows, so clips are films only, and the film list for New Kid was led by a PG papal thriller. That is why clips are checked by genre, tag and year as well as rating. The analysis compare endpoint returned no shared tags between game or TV favorites and a book in our test, so the opening uses the book's own tags and the favorites that lead into it.
 
@@ -83,6 +83,7 @@ cp .env.example .env    # add a Qloo hackathon key and an Azure OpenAI deploymen
 npm start               # http://localhost:8795
 npm test                # 23 tests, mock Qloo data, AI off
 npm run check           # tests the Qloo key and the model without printing either key
+npm run compare         # the model-only table above, against the running server (live keys)
 ```
 
 With no Qloo key, the app runs on a small built-in mock catalog (`server/qloo-mock.js`) with the same response shapes as the live API. Its titles, years and ratings are public facts; its scores are made up. With no Azure key, the agent steps run as fixed rules.
@@ -103,7 +104,8 @@ server/
   demo-data.js    the fictional class
 public/           the web app (no framework)
 test/             node:test suites
-scripts/check-setup.js
+scripts/check-setup.js   setup check
+scripts/compare-model.js the model-only comparison
 ```
 
 ## Known limits
